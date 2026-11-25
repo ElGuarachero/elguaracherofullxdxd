@@ -39,6 +39,9 @@ target_compile_definitions(ElMaestroSaichan PUBLIC
 )
 
 target_link_libraries(ElMaestroSaichan PRIVATE
+        SaichanAssets
+        juce::juce_dsp
+    PUBLIC
     juce::juce_audio_basics
     juce::juce_audio_processors
     juce::juce_audio_utils
