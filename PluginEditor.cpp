@@ -205,12 +205,9 @@ void KickstartGraph::paint (juce::Graphics& g)
     g.setColour (NeonLookAndFeel::sky.withAlpha (0.5f));
     g.drawRoundedRectangle (box.reduced (0.5f), 12.0f, 1.2f);
 
-    g.setFont (juce::Font (13.0f, juce::Font::bold));
-    g.setColour (NeonLookAndFeel::skyCore);
-    g.drawText ("KICKSTART", box.withHeight (26.0f).reduced (12.0f, 4.0f),
-                juce::Justification::left, false);
 
-    const auto plot = box.reduced (14.0f, 10.0f).withTrimmedTop (24.0f);
+
+    const auto plot = box.reduced (14.0f, 12.0f);
 
     const float depth = (float) depthKnob.getValue();
     const float minGain = 1.0f - depth * (1.0f - 0.22f);
