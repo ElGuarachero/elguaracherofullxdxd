@@ -113,7 +113,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void updateFilters (double hpFreq, double lpFreq);
 
-    // 8th order = 4 biquads per filter (Butterworth Q values)
+    // 8.º orden = 4 biquads por filtro (valores Q de Butterworth)
     static constexpr int filterStages = 4;
     static constexpr float butterworthQ[filterStages] = { 0.5098f, 0.6013f, 0.8999f, 2.5629f };
 
