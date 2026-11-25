@@ -48,7 +48,7 @@ namespace
         return juce::String (juce::roundToInt (hz)) + " Hz";
     }
 
-    void drawBulge (juce::Graphics& g, const juce::Image& photo,
+        void drawBulge (juce::Graphics& g, const juce::Image& photo,
                     const FacePoint& spot, float amount)
     {
         if (amount < 0.01f || ! photo.isValid())
@@ -70,7 +70,8 @@ namespace
         if (w <= 0 || h <= 0)
             return;
 
-        juce::Image bulged (juce::Image::ARGB, w, h, true);
+        // Imagen sin canal alpha: no aparecen bordes oscuros ni manchas
+        juce::Image bulged (juce::Image::RGB, w, h, false);
 
         for (int y = 0; y < h; ++y)
         {
@@ -80,20 +81,21 @@ namespace
                 const float dy = (float) (y0 + y) + 0.5f - cy;
                 const float d  = std::sqrt (dx * dx + dy * dy);
 
-                if (d >= r)
-                    continue;
+                // Fuera del círculo (k = 1) copia la foto tal cual,
+                // así el borde se empalma sin cortes
+                float k = 1.0f;
 
-                const float t = d / r;
-                const float k = 1.0f - strength * (1.0f - t * t);
+                if (d < r)
+                {
+                    const float t = d / r;
+                    k = 1.0f - strength * (1.0f - t * t);
+                }
 
                 const int sx = juce::jlimit (0, photo.getWidth()  - 1, (int) (cx + dx * k));
                 const int sy = juce::jlimit (0, photo.getHeight() - 1, (int) (cy + dy * k));
 
-                const float edge = juce::jlimit (0.0f, 1.0f, r - d);
-
-                bulged.setPixelAt (x, y, photo.getPixelAt (sx, sy).withAlpha (edge));
+                bulged.setPixelAt (x, y, photo.getPixelAt (sx, sy));
             }
-        }
 
         g.drawImageAt (bulged, x0, y0);
     }
@@ -274,7 +276,9 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
 {
     setLookAndFeel (&laf);
     setSize (windowSize, windowSize);
-
+    if (background.isValid())
+        background = background.rescaled (windowSize, windowSize,
+                                          juce::Graphics::highResamplingQuality);
     auto styleKnob = [] (juce::Slider& s)
     {
         s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
