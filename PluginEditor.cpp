@@ -4,16 +4,36 @@
 
 namespace
 {
-    constexpr int windowWidth  = 980;
-    constexpr int windowHeight = 500;
-    constexpr int cellWidth    = 160;
-    constexpr int cellGap      = 30;
-    constexpr int plateTop     = 110;
-    constexpr int plateHeight  = 345;
+    constexpr int windowSize = 800;
+    constexpr int knobW = 110;
+    constexpr int knobGap = 10;
+    constexpr int rowX0 = (windowSize - (6 * knobW + 5 * knobGap)) / 2;
+    constexpr int labelY = 596;
+    constexpr int knobY = 618;
+    constexpr int knobH = 124;
+    constexpr int buttonY = 748;
 
     int cellX (int index)
     {
-        return 30 + index * (cellWidth + cellGap);
+        return rowX0 + index * (knobW + knobGap);
+    }
+
+    // Puntos de la cara en proporción de la imagen (0 a 1). Ajustables.
+    struct FacePoint
+    {
+        float x, y, radius;
+    };
+
+    constexpr FacePoint eyeLeft  { 0.478f, 0.195f, 0.045f };   // RATE
+    constexpr FacePoint eyeRight { 0.570f, 0.195f, 0.045f };   // RATE
+    constexpr FacePoint nose     { 0.522f, 0.245f, 0.035f };   // NOISE
+    constexpr FacePoint mouth    { 0.522f, 0.300f, 0.050f };   // NOISE
+    constexpr FacePoint earLeft  { 0.410f, 0.255f, 0.040f };   // HIGH PASS
+    constexpr FacePoint earRight { 0.626f, 0.255f, 0.040f };   // LOW PASS
+
+    float proportion (const juce::Slider& s)
+    {
+        return (float) s.valueToProportionOfLength (s.getValue());
     }
 
     juce::String formatFrequency (double hz)
@@ -22,6 +42,33 @@ namespace
             return juce::String (hz / 1000.0, 2) + " kHz";
 
         return juce::String (juce::roundToInt (hz)) + " Hz";
+    }
+
+    // "hinchar" una zona: dibuja la foto agrandada dentro de un círculo
+    void drawBulge (juce::Graphics& g, const juce::Image& photo,
+                    const FacePoint& spot, float amount)
+    {
+        if (amount < 0.01f)
+            return;
+
+        const float cx = spot.x * windowSize;
+        const float cy = spot.y * windowSize;
+        const float r  = spot.radius * windowSize;
+
+        {
+            juce::Graphics::ScopedSaveState state (g);
+
+            juce::Path mask;
+            mask.addEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
+            g.reduceClipRegion (mask);
+
+            const float s = 1.0f + 0.35f * amount;
+            g.addTransform (juce::AffineTransform::scale (s, s, cx, cy));
+            g.drawImageAt (photo, 0, 0);
+        }
+
+        g.setColour (NeonLookAndFeel::sky.withAlpha (0.6f * amount));
+        g.drawEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f, 1.5f);
     }
 }
 
@@ -48,7 +95,7 @@ void NeonLookAndFeel::drawRotarySlider (
     juce::Slider&)
 {
     auto bounds = juce::Rectangle<float> (
-        (float) x, (float) y, (float) width, (float) height).reduced (14.0f);
+        (float) x, (float) y, (float) width, (float) height).reduced (12.0f);
 
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
     const auto centre = bounds.getCentre();
@@ -64,7 +111,7 @@ void NeonLookAndFeel::drawRotarySlider (
         juce::PathStrokeType (6.0f, juce::PathStrokeType::curved,
                               juce::PathStrokeType::rounded));
 
-    // Active arc with neon glow
+    // Arco activo con glow neón
     juce::Path activeArc;
     activeArc.addCentredArc (centre.x, centre.y, radius, radius,
                              0.0f, startAngle, angle, true);
@@ -83,7 +130,7 @@ void NeonLookAndFeel::drawRotarySlider (
         juce::PathStrokeType (4.0f, juce::PathStrokeType::curved,
                               juce::PathStrokeType::rounded));
 
-    // Knob body with neon border
+    // Cuerpo de la perilla con borde neón
     const float knobRadius = radius * 0.68f;
 
     auto knobArea = juce::Rectangle<float> (
@@ -102,7 +149,7 @@ void NeonLookAndFeel::drawRotarySlider (
     g.setColour (sky);
     g.drawEllipse (knobArea, 2.0f);
 
-    // Pointer
+    // Puntero
     const float innerRadius = radius * 0.28f;
     const float outerRadius = radius * 0.57f;
 
@@ -116,28 +163,114 @@ void NeonLookAndFeel::drawRotarySlider (
 }
 
 //==============================================================================
+// Kickstart graph
+//==============================================================================
+KickstartGraph::KickstartGraph (SaichanProcessor& p,
+                                juce::Slider& depth,
+                                juce::Slider& rate)
+    : processor (p), depthKnob (depth), rateKnob (rate)
+{
+}
+
+void KickstartGraph::paint (juce::Graphics& g)
+{
+    const auto box = getLocalBounds().toFloat();
+
+    g.setColour (juce::Colour (0xc8020811));
+    g.fillRoundedRectangle (box, 12.0f);
+
+    g.setColour (NeonLookAndFeel::sky.withAlpha (0.5f));
+    g.drawRoundedRectangle (box.reduced (0.5f), 12.0f, 1.2f);
+
+    g.setFont (juce::Font (13.0f, juce::Font::bold));
+    g.setColour (NeonLookAndFeel::skyCore);
+    g.drawText ("KICKSTART", box.withHeight (26.0f).reduced (12.0f, 4.0f),
+                juce::Justification::left, false);
+
+    const auto plot = box.reduced (14.0f, 10.0f).withTrimmedTop (24.0f);
+
+    const float depth = (float) depthKnob.getValue();
+    const float minGain = 1.0f - depth * (1.0f - 0.22f);
+    const bool active = rateKnob.getValue() > 0.01;
+
+    auto gainAt = [minGain, active] (float x)
+    {
+        return active ? minGain + (1.0f - minGain) * x * x : 1.0f;
+    };
+
+    auto toY = [plot] (float gain)
+    {
+        return plot.getBottom() - (gain - 0.22f) / 0.78f * plot.getHeight();
+    };
+
+    juce::Path curve;
+
+    for (int i = 0; i <= 64; ++i)
+    {
+        const float x = (float) i / 64.0f;
+        const juce::Point<float> p (plot.getX() + x * plot.getWidth(),
+                                    toY (gainAt (x)));
+
+        if (i == 0)
+            curve.startNewSubPath (p);
+        else
+            curve.lineTo (p);
+    }
+
+    for (int i = 4; i >= 1; --i)
+    {
+        g.setColour (NeonLookAndFeel::sky.withAlpha (0.12f * (float) i));
+        g.strokePath (curve, juce::PathStrokeType ((float) i * 3.0f));
+    }
+
+    g.setColour (NeonLookAndFeel::skyCore);
+    g.strokePath (curve, juce::PathStrokeType (2.0f));
+
+    if (active)
+    {
+        const float phase = processor.getVisualPhase();
+        const float dotX = plot.getX() + phase * plot.getWidth();
+        const float dotY = toY (gainAt (phase));
+
+        g.setColour (NeonLookAndFeel::sky.withAlpha (0.35f));
+        g.fillEllipse (dotX - 10.0f, dotY - 10.0f, 20.0f, 20.0f);
+
+        g.setColour (NeonLookAndFeel::skyCore);
+        g.fillEllipse (dotX - 5.0f, dotY - 5.0f, 10.0f, 10.0f);
+    }
+}
+
+//==============================================================================
 // Editor
 //==============================================================================
 SaichanEditor::SaichanEditor (SaichanProcessor& p)
     : AudioProcessorEditor (&p),
       processor (p),
       background (juce::ImageFileFormat::loadFrom (BinaryData::fede_rodriguez_jpg,
-                                                   BinaryData::fede_rodriguez_jpgSize))
+                                                   BinaryData::fede_rodriguez_jpgSize)),
+      logo (juce::ImageFileFormat::loadFrom (BinaryData::logo_png,
+                                             BinaryData::logo_pngSize)),
+      kickstart (p, volumeKnob, rateKnob)
 {
     setLookAndFeel (&laf);
-    setSize (windowWidth, windowHeight);
+    setSize (windowSize, windowSize);
+
+    auto styleKnob = [] (juce::Slider& s)
+    {
+        s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, knobW, 20);
+    };
 
     auto setupLabel = [this] (juce::Label& label, const juce::String& text)
     {
         label.setText (text, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
-        label.setFont (juce::Font (19.0f, juce::Font::bold));
+        label.setFont (juce::Font (14.0f, juce::Font::bold));
         addAndMakeVisible (label);
     };
 
     // RATE
-    rateKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    rateKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 110, 24);
+    styleKnob (rateKnob);
     rateKnob.setDoubleClickReturnValue (true, 8.0);
 
     rateKnob.textFromValueFunction = [this] (double value)
@@ -158,12 +291,20 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
 
         return juce::String (value, 2) + " Hz";
     };
-
     addAndMakeVisible (rateKnob);
 
+    // VOLUME (cuánto se aplica el efecto)
+    styleKnob (volumeKnob);
+    volumeKnob.setRange (0.0, 1.0, 0.01);
+    volumeKnob.setDoubleClickReturnValue (true, 1.0);
+    volumeKnob.textFromValueFunction = [] (double value)
+    {
+        return juce::String (juce::roundToInt (value * 100.0)) + " %";
+    };
+    addAndMakeVisible (volumeKnob);
+
     // SEMITONES
-    semitonesKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    semitonesKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 110, 24);
+    styleKnob (semitonesKnob);
     semitonesKnob.setRange (-12.0, 12.0, 0.01);
     semitonesKnob.setDoubleClickReturnValue (true, 0.0);
     semitonesKnob.textFromValueFunction = [] (double value)
@@ -173,24 +314,21 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
     addAndMakeVisible (semitonesKnob);
 
     // HIGH PASS
-    highPassKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    highPassKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 110, 24);
+    styleKnob (highPassKnob);
     highPassKnob.setNormalisableRange (juce::NormalisableRange<double> (20.0, 2000.0, 0.01, 0.3));
     highPassKnob.setDoubleClickReturnValue (true, 20.0);
     highPassKnob.textFromValueFunction = [] (double value) { return formatFrequency (value); };
     addAndMakeVisible (highPassKnob);
 
     // LOW PASS
-    lowPassKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    lowPassKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 110, 24);
+    styleKnob (lowPassKnob);
     lowPassKnob.setNormalisableRange (juce::NormalisableRange<double> (200.0, 20000.0, 0.01, 0.3));
     lowPassKnob.setDoubleClickReturnValue (true, 20000.0);
     lowPassKnob.textFromValueFunction = [] (double value) { return formatFrequency (value); };
     addAndMakeVisible (lowPassKnob);
 
     // NOISE
-    noiseKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    noiseKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 110, 24);
+    styleKnob (noiseKnob);
     noiseKnob.setRange (0.0, 1.0, 0.001);
     noiseKnob.setDoubleClickReturnValue (true, 0.0);
     noiseKnob.textFromValueFunction = [] (double value)
@@ -204,6 +342,7 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
 
     // Labels
     setupLabel (rateLabel, "RATE");
+    setupLabel (volumeLabel, "VOLUME");
     setupLabel (semitonesLabel, "SEMITONES");
     setupLabel (highPassLabel, "HIGH PASS");
     setupLabel (lowPassLabel, "LOW PASS");
@@ -215,9 +354,14 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
     addAndMakeVisible (syncButton);
     addAndMakeVisible (noiseSyncButton);
 
+    addAndMakeVisible (kickstart);
+
     // Attachments
     rateAttachment = std::make_unique<SliderAttachment> (
         processor.apvts, "rate", rateKnob);
+
+    volumeAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "depth", volumeKnob);
 
     semitonesAttachment = std::make_unique<SliderAttachment> (
         processor.apvts, "semitones", semitonesKnob);
@@ -237,8 +381,6 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
     noiseSyncAttachment = std::make_unique<ButtonAttachment> (
         processor.apvts, "noisesync", noiseSyncButton);
 
-    // Ranges depend on SYNC / HZ. The timer keeps them updated, including
-    // when the state changes from a preset or the DAW.
     appliedSync = syncButton.getToggleState();
     applyRateRange (appliedSync);
 
@@ -277,74 +419,44 @@ void SaichanEditor::timerCallback()
 }
 
 //==============================================================================
-// Background and decoration
+// Paint
 //==============================================================================
 void SaichanEditor::paint (juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
-    const float level = juce::jlimit (0.0f, 1.0f, processor.getMeterLevel());
 
-    // Background: the character scene, pulsing slightly with the pump
-    {
-        juce::Graphics::ScopedSaveState state (g);
+    // Fondo fijo: la escena completa
+    if (background.isValid())
+        g.drawImage (background, bounds);
+    else
+        g.fillAll (juce::Colour (0xff050a14));
 
-        const float zoom = 1.0f + 0.012f * level;
-        g.addTransform (juce::AffineTransform::scale (
-            zoom, zoom, bounds.getCentreX(), bounds.getCentreY()));
+    // Partes de la cara que se hinchan
+    drawBulge (g, background, eyeLeft,  proportion (rateKnob));
+    drawBulge (g, background, eyeRight, proportion (rateKnob));
+    drawBulge (g, background, mouth,    proportion (noiseKnob));
+    drawBulge (g, background, nose,     proportion (noiseKnob));
+    drawBulge (g, background, earLeft,  proportion (highPassKnob));
+    drawBulge (g, background, earRight, proportion (lowPassKnob));
 
-        if (backgroundCache.isValid())
-            g.drawImageAt (backgroundCache, 0, 0);
-        else
-            g.fillAll (juce::Colour (0xff050a14));
-    }
+    // Logo centrado en todo el plugin
+    if (logo.isValid())
+        g.drawImageWithin (logo, 280, 280, 240, 240,
+                           juce::RectanglePlacement::centred);
 
-    // Neon frame, brighter with each pump
-    g.setColour (NeonLookAndFeel::sky.withAlpha (0.55f + 0.45f * level));
+    // Marco neón
+    g.setColour (NeonLookAndFeel::sky.withAlpha (0.7f));
     g.drawRoundedRectangle (bounds.reduced (7.0f), 17.0f, 2.0f);
 
-    // Dark plates behind each control group
-    for (int i = 0; i < 5; ++i)
-    {
-        auto plate = juce::Rectangle<float> (
-            (float) cellX (i), (float) plateTop,
-            (float) cellWidth, (float) plateHeight);
+    // Placa oscura detrás de los controles
+    auto plate = juce::Rectangle<float> ((float) rowX0 - 14.0f, 584.0f,
+                                         (float) (6 * knobW + 5 * knobGap + 28), 200.0f);
 
-        g.setColour (juce::Colour (0xb8020811));
-        g.fillRoundedRectangle (plate, 14.0f);
+    g.setColour (juce::Colour (0xc4020811));
+    g.fillRoundedRectangle (plate, 16.0f);
 
-        g.setColour (NeonLookAndFeel::sky.withAlpha (0.45f));
-        g.drawRoundedRectangle (plate.reduced (0.5f), 14.0f, 1.2f);
-    }
-
-    // Brand
-    g.setFont (juce::Font (28.0f, juce::Font::bold));
-
-    g.setColour (NeonLookAndFeel::sky.withAlpha (0.35f));
-    g.drawText ("FEDE RODRIGUEZ",
-                juce::Rectangle<int> (0, 14, getWidth(), 34),
-                juce::Justification::centred);
-
-    g.setColour (juce::Colours::white);
-    g.drawText ("FEDE RODRIGUEZ",
-                juce::Rectangle<int> (0, 12, getWidth(), 34),
-                juce::Justification::centred);
-
-    // Plugin title
-    g.setFont (juce::Font (19.0f, juce::Font::bold));
-    g.setColour (NeonLookAndFeel::skyCore);
-    g.drawText ("MAESTRO SAICHAN VST",
-                juce::Rectangle<int> (0, 50, getWidth(), 30),
-                juce::Justification::centred);
-
-    // Pump meter
-    auto meterArea = juce::Rectangle<float> (
-        (windowWidth - 260) * 0.5f, (float) getHeight() - 25.0f, 260.0f, 7.0f);
-
-    g.setColour (NeonLookAndFeel::track);
-    g.fillRoundedRectangle (meterArea, 4.0f);
-
-    g.setColour (NeonLookAndFeel::sky);
-    g.fillRoundedRectangle (meterArea.withWidth (meterArea.getWidth() * level), 4.0f);
+    g.setColour (NeonLookAndFeel::sky.withAlpha (0.45f));
+    g.drawRoundedRectangle (plate.reduced (0.5f), 16.0f, 1.2f);
 }
 
 //==============================================================================
@@ -352,44 +464,25 @@ void SaichanEditor::paint (juce::Graphics& g)
 //==============================================================================
 void SaichanEditor::resized()
 {
-    const auto bounds = getLocalBounds();
+    kickstart.setBounds (24, 24, 260, 118);
 
-    // Scale the photo to cover the window, centred, darkened for legibility
-    if (background.isValid())
-    {
-        backgroundCache = juce::Image (juce::Image::ARGB,
-                                       bounds.getWidth(), bounds.getHeight(), true);
+    rateLabel.setBounds (cellX (0), labelY, knobW, 20);
+    rateKnob.setBounds (cellX (0), knobY, knobW, knobH);
+    syncButton.setBounds (cellX (0) + 8, buttonY, 94, 24);
 
-        juce::Graphics bg (backgroundCache);
+    volumeLabel.setBounds (cellX (1), labelY, knobW, 20);
+    volumeKnob.setBounds (cellX (1), knobY, knobW, knobH);
 
-        const float scale = juce::jmax (
-            (float) bounds.getWidth()  / (float) background.getWidth(),
-            (float) bounds.getHeight() / (float) background.getHeight());
+    semitonesLabel.setBounds (cellX (2), labelY, knobW, 20);
+    semitonesKnob.setBounds (cellX (2), knobY, knobW, knobH);
 
-        const float w = background.getWidth() * scale;
-        const float h = background.getHeight() * scale;
+    highPassLabel.setBounds (cellX (3), labelY, knobW, 20);
+    highPassKnob.setBounds (cellX (3), knobY, knobW, knobH);
 
-        bg.drawImage (background, juce::Rectangle<float> (
-            (bounds.getWidth() - w) * 0.5f, (bounds.getHeight() - h) * 0.5f, w, h));
+    lowPassLabel.setBounds (cellX (4), labelY, knobW, 20);
+    lowPassKnob.setBounds (cellX (4), knobY, knobW, knobH);
 
-        bg.setColour (juce::Colour (0x66020611));
-        bg.fillAll();
-    }
-
-    rateLabel.setBounds (cellX (0), 120, cellWidth, 26);
-    rateKnob.setBounds (cellX (0), 150, cellWidth, 230);
-    syncButton.setBounds (cellX (0) + 15, 400, 130, 28);
-
-    semitonesLabel.setBounds (cellX (1), 120, cellWidth, 26);
-    semitonesKnob.setBounds (cellX (1), 150, cellWidth, 230);
-
-    highPassLabel.setBounds (cellX (2), 120, cellWidth, 26);
-    highPassKnob.setBounds (cellX (2), 150, cellWidth, 230);
-
-    lowPassLabel.setBounds (cellX (3), 120, cellWidth, 26);
-    lowPassKnob.setBounds (cellX (3), 150, cellWidth, 230);
-
-    noiseLabel.setBounds (cellX (4), 120, cellWidth, 26);
-    noiseKnob.setBounds (cellX (4), 150, cellWidth, 230);
-    noiseSyncButton.setBounds (cellX (4) + 15, 400, 130, 28);
+    noiseLabel.setBounds (cellX (5), labelY, knobW, 20);
+    noiseKnob.setBounds (cellX (5), knobY, knobW, knobH);
+    noiseSyncButton.setBounds (cellX (5) + 2, buttonY, 106, 24);
 }
