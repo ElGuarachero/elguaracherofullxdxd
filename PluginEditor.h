@@ -24,6 +24,21 @@ public:
 };
 
 //==============================================================================
+// Gráfico Kickstart: muestra la curva del sidechain y el punto actual
+//==============================================================================
+class KickstartGraph : public juce::Component
+{
+public:
+    KickstartGraph (SaichanProcessor& p, juce::Slider& depth, juce::Slider& rate);
+    void paint (juce::Graphics&) override;
+
+private:
+    SaichanProcessor& processor;
+    juce::Slider& depthKnob;
+    juce::Slider& rateKnob;
+};
+
+//==============================================================================
 // Plugin Editor
 //==============================================================================
 class SaichanEditor : public juce::AudioProcessorEditor,
@@ -43,16 +58,18 @@ private:
     SaichanProcessor& processor;
     NeonLookAndFeel laf;
 
-    juce::Image background;        // foto original escalada
-    juce::Image backgroundCache;   // fondo ya recortado al tamaño de la ventana
+    juce::Image background;
+    juce::Image logo;
 
     juce::Slider rateKnob;
+    juce::Slider volumeKnob;
     juce::Slider semitonesKnob;
     juce::Slider highPassKnob;
     juce::Slider lowPassKnob;
     juce::Slider noiseKnob;
 
     juce::Label rateLabel;
+    juce::Label volumeLabel;
     juce::Label semitonesLabel;
     juce::Label highPassLabel;
     juce::Label lowPassLabel;
@@ -60,6 +77,8 @@ private:
 
     juce::ToggleButton syncButton { "SYNC" };
     juce::ToggleButton noiseSyncButton { "NOISE SYNC" };
+
+    KickstartGraph kickstart;
 
     bool appliedSync = false;
 
@@ -70,6 +89,7 @@ private:
         juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<SliderAttachment> rateAttachment;
+    std::unique_ptr<SliderAttachment> volumeAttachment;
     std::unique_ptr<SliderAttachment> semitonesAttachment;
     std::unique_ptr<SliderAttachment> highPassAttachment;
     std::unique_ptr<SliderAttachment> lowPassAttachment;
