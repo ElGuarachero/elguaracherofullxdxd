@@ -1,15 +1,70 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_dsp/juce_dsp.h>
 #include <atomic>
+#include <cmath>
 
+//==============================================================================
+// Filtro biquad simple (un tramo de filtro de 2.º orden)
+//==============================================================================
+struct SaichanBiquad
+{
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+    float a1 = 0.0f, a2 = 0.0f;
+    float z1 = 0.0f, z2 = 0.0f;
+
+    void setHighPass (double sampleRate, double freq, double q)
+    {
+        const double w0 = juce::MathConstants<double>::twoPi * freq / sampleRate;
+        const double cw = std::cos (w0);
+        const double alpha = std::sin (w0) / (2.0 * q);
+        const double a0 = 1.0 + alpha;
+
+        b0 = (float) ((1.0 + cw) * 0.5 / a0);
+        b1 = (float) (-(1.0 + cw) / a0);
+        b2 = (float) ((1.0 + cw) * 0.5 / a0);
+        a1 = (float) (-2.0 * cw / a0);
+        a2 = (float) ((1.0 - alpha) / a0);
+    }
+
+    void setLowPass (double sampleRate, double freq, double q)
+    {
+        const double w0 = juce::MathConstants<double>::twoPi * freq / sampleRate;
+        const double cw = std::cos (w0);
+        const double alpha = std::sin (w0) / (2.0 * q);
+        const double a0 = 1.0 + alpha;
+
+        b0 = (float) ((1.0 - cw) * 0.5 / a0);
+        b1 = (float) ((1.0 - cw) / a0);
+        b2 = (float) ((1.0 - cw) * 0.5 / a0);
+        a1 = (float) (-2.0 * cw / a0);
+        a2 = (float) ((1.0 - alpha) / a0);
+    }
+
+    void reset() noexcept
+    {
+        z1 = 0.0f;
+        z2 = 0.0f;
+    }
+
+    float process (float x) noexcept
+    {
+        const float y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+
+//==============================================================================
+// Processor
+//==============================================================================
 class SaichanProcessor : public juce::AudioProcessor
 {
 public:
     static constexpr int numSyncDivisions = 24;
     static const char* const syncNames[numSyncDivisions];
-    static const double syncBeats[numSyncDivisions];   // duración en negras
+    static const double syncBeats[numSyncDivisions];
 
     SaichanProcessor();
     ~SaichanProcessor() override = default;
@@ -77,8 +132,8 @@ private:
     int pitchWritePosition = 0;
     float pitchPhase = 0.0f;
 
-    juce::dsp::IIR::Filter<float> hpFilters[2][filterStages];   // [channel][stage]
-    juce::dsp::IIR::Filter<float> lpFilters[2][filterStages];
+    SaichanBiquad hpFilters[2][filterStages];   // [canal][etapa]
+    SaichanBiquad lpFilters[2][filterStages];
     double lastHpFreq = -1.0;
     double lastLpFreq = -1.0;
 
