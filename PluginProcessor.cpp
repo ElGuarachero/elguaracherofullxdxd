@@ -36,6 +36,7 @@ SaichanProcessor::SaichanProcessor()
     pLowPass   = apvts.getRawParameterValue ("lowpass");
     pNoise     = apvts.getRawParameterValue ("noise");
     pNoiseSync = apvts.getRawParameterValue ("noisesync");
+    pDepth     = apvts.getRawParameterValue ("depth");
 }
 
 //==============================================================================
@@ -85,6 +86,12 @@ SaichanProcessor::createParameterLayout()
         juce::ParameterID { "noisesync", 1 },
         "NOISE SYNC",
         true));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "depth", 1 },
+        "VOLUME",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f),
+        1.0f));
 
     return { params.begin(), params.end() };
 }
@@ -147,7 +154,7 @@ void SaichanProcessor::prepareToPlay (double sr, int)
             lpFilters[ch][s].reset();
         }
 
-    lastHpFreq = -1.0;   // fuerza recalcular coeficientes
+    lastHpFreq = -1.0;
     lastLpFreq = -1.0;
 
     if (auto* playHead = getPlayHead())
@@ -178,6 +185,10 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const float semitones = pSemitones->load();
     const float noiseLevel = pNoise->load();
     const bool noiseFollowsRate = pNoiseSync->load() > 0.5f;
+
+    // Cuánto se aplica el efecto de pumping (VOLUME): 0 = nada, 1 = completo
+    const float depth = juce::jlimit (0.0f, 1.0f, pDepth->load());
+    const float minimumGain = 1.0f - depth * (1.0f - 0.22f);
 
     // Curva cuadrática: el volumen sube de forma suave con la perilla
     const float noiseGain = noiseLevel * noiseLevel * 0.25f;
@@ -210,7 +221,6 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            // Modo HZ: 0.01 a 32 ciclos por segundo
             const double frequency = juce::jlimit (0.01, 32.0, (double) rate);
             cycleSeconds = 1.0 / frequency;
         }
@@ -219,8 +229,6 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const double phaseIncrement = pumpEnabled
         ? 1.0 / (cycleSeconds * sampleRate)
         : 0.0;
-
-    constexpr float minimumGain = 0.22f;
 
     // El pitch es independiente del RATE
     const float pitchRatio = std::pow (2.0f, semitones / 12.0f);
@@ -259,7 +267,7 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (int i = 0; i < numSamples; ++i)
     {
         // 1. Pumping rítmico
-        float pumpShape = 0.0f;   // 1 al inicio del ciclo, 0 al final
+        float pumpShape = 0.0f;
 
         if (pumpEnabled)
         {
@@ -347,8 +355,6 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
 
         // 5. Noise
-        //    Sync ON:  sigue al pump (silencio con RATE en OFF)
-        //    Sync OFF: continuo, controlado solo por la perilla
         const float noiseEnvelope = noiseFollowsRate
             ? (pumpEnabled ? pumpShape : 0.0f)
             : 1.0f;
@@ -366,6 +372,7 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     meter.store (1.0f - currentGain);
+    visualPhase.store ((float) pumpPhase);
 }
 
 //==============================================================================
