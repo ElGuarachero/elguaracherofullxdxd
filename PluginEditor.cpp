@@ -50,31 +50,58 @@ namespace
         return juce::String (juce::roundToInt (hz)) + " Hz";
     }
 
-    // "Hinchar" una zona: dibuja la foto agrandada dentro de un círculo
+    // "Hinchar" una zona: deforma la imagen desde el centro hacia afuera (efecto lupa)
     void drawBulge (juce::Graphics& g, const juce::Image& photo,
                     const FacePoint& spot, float amount)
     {
-        if (amount < 0.01f)
+        if (amount < 0.01f || ! photo.isValid())
             return;
 
         const float cx = spot.x * windowSize;
         const float cy = spot.y * windowSize;
         const float r  = spot.radius * windowSize;
+        const float strength = 0.5f * amount;
 
+        const int x0 = juce::jmax (0, (int) std::floor (cx - r));
+        const int y0 = juce::jmax (0, (int) std::floor (cy - r));
+        const int x1 = juce::jmin (photo.getWidth(),  (int) std::ceil (cx + r));
+        const int y1 = juce::jmin (photo.getHeight(), (int) std::ceil (cy + r));
+
+        const int w = x1 - x0;
+        const int h = y1 - y0;
+
+        if (w <= 0 || h <= 0)
+            return;
+
+        juce::Image bulged (juce::Image::ARGB, w, h, true);
+
+        for (int y = 0; y < h; ++y)
         {
-            juce::Graphics::ScopedSaveState state (g);
+            for (int x = 0; x < w; ++x)
+            {
+                const float dx = (float) (x0 + x) + 0.5f - cx;
+                const float dy = (float) (y0 + y) + 0.5f - cy;
+                const float d  = std::sqrt (dx * dx + dy * dy);
 
-            juce::Path mask;
-            mask.addEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
-            g.reduceClipRegion (mask);
+                if (d >= r)
+                    continue;
 
-            const float s = 1.0f + 0.35f * amount;
-            g.addTransform (juce::AffineTransform::scale (s, s, cx, cy));
-            g.drawImageAt (photo, 0, 0);
+                // Cerca del centro se toma un punto más cercano de la foto,
+                // por eso la zona se ve agrandada. En el borde no cambia nada.
+                const float t = d / r;
+                const float k = 1.0f - strength * (1.0f - t * t);
+
+                const int sx = juce::jlimit (0, photo.getWidth()  - 1, (int) (cx + dx * k));
+                const int sy = juce::jlimit (0, photo.getHeight() - 1, (int) (cy + dy * k));
+
+                // Borde suave para que no se note el corte del círculo
+                const float edge = juce::jlimit (0.0f, 1.0f, r - d);
+
+                bulged.setPixelAt (x, y, photo.getPixelAt (sx, sy).withAlpha (edge));
+            }
         }
 
-        g.setColour (NeonLookAndFeel::sky.withAlpha (0.6f * amount));
-        g.drawEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f, 1.5f);
+        g.drawImageAt (bulged, x0, y0);
     }
 }
 
@@ -337,158 +364,3 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
     styleKnob (noiseKnob);
     noiseKnob.setRange (0.0, 1.0, 0.001);
     noiseKnob.setDoubleClickReturnValue (true, 0.0);
-    noiseKnob.textFromValueFunction = [] (double value)
-    {
-        if (value < 0.001)
-            return juce::String ("OFF");
-
-        return juce::String (juce::roundToInt (value * 100.0)) + " %";
-    };
-    addAndMakeVisible (noiseKnob);
-
-    // Labels
-    setupLabel (rateLabel, "RATE");
-    setupLabel (volumeLabel, "VOLUME");
-    setupLabel (semitonesLabel, "SEMITONES");
-    setupLabel (highPassLabel, "HIGH PASS");
-    setupLabel (lowPassLabel, "LOW PASS");
-    setupLabel (noiseLabel, "NOISE");
-
-    // Buttons
-    syncButton.setClickingTogglesState (true);
-    noiseSyncButton.setClickingTogglesState (true);
-    addAndMakeVisible (syncButton);
-    addAndMakeVisible (noiseSyncButton);
-
-    addAndMakeVisible (kickstart);
-
-    // Attachments
-    rateAttachment = std::make_unique<SliderAttachment> (
-        processor.apvts, "rate", rateKnob);
-
-    volumeAttachment = std::make_unique<SliderAttachment> (
-        processor.apvts, "depth", volumeKnob);
-
-    semitonesAttachment = std::make_unique<SliderAttachment> (
-        processor.apvts, "semitones", semitonesKnob);
-
-    highPassAttachment = std::make_unique<SliderAttachment> (
-        processor.apvts, "highpass", highPassKnob);
-
-    lowPassAttachment = std::make_unique<SliderAttachment> (
-        processor.apvts, "lowpass", lowPassKnob);
-
-    noiseAttachment = std::make_unique<SliderAttachment> (
-        processor.apvts, "noise", noiseKnob);
-
-    syncAttachment = std::make_unique<ButtonAttachment> (
-        processor.apvts, "ratemode", syncButton);
-
-    noiseSyncAttachment = std::make_unique<ButtonAttachment> (
-        processor.apvts, "noisesync", noiseSyncButton);
-
-    appliedSync = syncButton.getToggleState();
-    applyRateRange (appliedSync);
-
-    startTimerHz (30);
-}
-
-SaichanEditor::~SaichanEditor()
-{
-    stopTimer();
-    setLookAndFeel (nullptr);
-}
-
-void SaichanEditor::applyRateRange (bool sync)
-{
-    appliedSync = sync;
-
-    if (sync)
-        rateKnob.setRange (0.0, (double) SaichanProcessor::numSyncDivisions, 1.0);
-    else
-        rateKnob.setRange (0.0, 32.0, 0.01);
-
-    syncButton.setButtonText (sync ? "SYNC" : "HZ");
-
-    rateKnob.setValue (rateKnob.getValue(), juce::sendNotificationSync);
-    rateKnob.repaint();
-}
-
-void SaichanEditor::timerCallback()
-{
-    const bool sync = syncButton.getToggleState();
-
-    if (sync != appliedSync)
-        applyRateRange (sync);
-
-    repaint();
-}
-
-//==============================================================================
-// Paint
-//==============================================================================
-void SaichanEditor::paint (juce::Graphics& g)
-{
-    const auto bounds = getLocalBounds().toFloat();
-
-    // Fondo fijo: la escena completa
-    if (background.isValid())
-        g.drawImage (background, bounds);
-    else
-        g.fillAll (juce::Colour (0xff050a14));
-
-    // Partes de la cara que se hinchan
-    drawBulge (g, background, eyeLeft,  proportion (rateKnob));
-    drawBulge (g, background, eyeRight, proportion (rateKnob));
-    drawBulge (g, background, mouth,    proportion (noiseKnob));
-    drawBulge (g, background, nose,     proportion (noiseKnob));
-    drawBulge (g, background, earLeft,  proportion (highPassKnob));
-    drawBulge (g, background, earRight, proportion (lowPassKnob));
-
-    // Logo centrado en todo el plugin
-    if (logo.isValid())
-        g.drawImageWithin (logo, 280, 280, 240, 240,
-                           juce::RectanglePlacement::centred);
-
-    // Marco neón
-    g.setColour (NeonLookAndFeel::sky.withAlpha (0.7f));
-    g.drawRoundedRectangle (bounds.reduced (7.0f), 17.0f, 2.0f);
-
-    // Placa oscura detrás de los controles
-    auto plate = juce::Rectangle<float> ((float) rowX0 - 14.0f, 584.0f,
-                                         (float) (6 * knobW + 5 * knobGap + 28), 200.0f);
-
-    g.setColour (juce::Colour (0xc4020811));
-    g.fillRoundedRectangle (plate, 16.0f);
-
-    g.setColour (NeonLookAndFeel::sky.withAlpha (0.45f));
-    g.drawRoundedRectangle (plate.reduced (0.5f), 16.0f, 1.2f);
-}
-
-//==============================================================================
-// Layout
-//==============================================================================
-void SaichanEditor::resized()
-{
-    kickstart.setBounds (24, 24, 260, 118);
-
-    rateLabel.setBounds (cellX (0), labelY, knobW, 20);
-    rateKnob.setBounds (cellX (0), knobY, knobW, knobH);
-    syncButton.setBounds (cellX (0) + 8, buttonY, 94, 24);
-
-    volumeLabel.setBounds (cellX (1), labelY, knobW, 20);
-    volumeKnob.setBounds (cellX (1), knobY, knobW, knobH);
-
-    semitonesLabel.setBounds (cellX (2), labelY, knobW, 20);
-    semitonesKnob.setBounds (cellX (2), knobY, knobW, knobH);
-
-    highPassLabel.setBounds (cellX (3), labelY, knobW, 20);
-    highPassKnob.setBounds (cellX (3), knobY, knobW, knobH);
-
-    lowPassLabel.setBounds (cellX (4), labelY, knobW, 20);
-    lowPassKnob.setBounds (cellX (4), knobY, knobW, knobH);
-
-    noiseLabel.setBounds (cellX (5), labelY, knobW, 20);
-    noiseKnob.setBounds (cellX (5), knobY, knobW, knobH);
-    noiseSyncButton.setBounds (cellX (5) + 2, buttonY, 106, 24);
-}
