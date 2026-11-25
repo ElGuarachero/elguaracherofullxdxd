@@ -30,22 +30,18 @@ juce_add_binary_data (SaichanAssets SOURCES
     assets/fede_rodriguez.jpg
     assets/logo.png)
 
-# Los archivos del plugin van en el target compartido de JUCE
-target_sources(ElMaestroSaichan_SharedCode PRIVATE
+target_sources (ElMaestroSaichan PRIVATE
     PluginProcessor.cpp
     PluginEditor.cpp)
 
-target_compile_definitions(ElMaestroSaichan PUBLIC
+target_compile_definitions (ElMaestroSaichan PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 
-target_link_libraries (ElMaestroSaichan_SharedCode PRIVATE
-    SaichanAssets
-    juce::juce_dsp)
-
 target_link_libraries (ElMaestroSaichan PRIVATE
+    SaichanAssets
     juce::juce_audio_basics
     juce::juce_audio_processors
     juce::juce_audio_utils
