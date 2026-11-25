@@ -98,6 +98,7 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     float getMeterLevel() const noexcept
+    float getVisualPhase() const noexcept { return visualPhase.load(); }
     {
         return meter.load();
     }
@@ -119,6 +120,8 @@ private:
     std::atomic<float>* pLowPass = nullptr;
     std::atomic<float>* pNoise = nullptr;
     std::atomic<float>* pNoiseSync = nullptr;
+    std::atomic<float>* pDepth = nullptr;
+    std::atomic<float> visualPhase { 0.0f };
 
     std::atomic<float> meter { 0.0f };
 
