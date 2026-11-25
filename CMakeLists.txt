@@ -41,6 +41,7 @@ target_compile_definitions(ElMaestroSaichan PUBLIC
 juce_add_binary_data (SaichanAssets SOURCES assets/fede_rodriguez.jpg)
 
 target_link_libraries (ElMaestroSaichan
+juce_add_binary_data (SaichanAssets SOURCES assets/fede_rodriguez.jpg assets/logo.png)
     PRIVATE
         SaichanAssets
         juce::juce_dsp
