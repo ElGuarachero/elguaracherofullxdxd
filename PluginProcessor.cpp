@@ -1,134 +1,250 @@
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
+//==============================================================================
+// Constructor
+//==============================================================================
 SaichanProcessor::SaichanProcessor()
     : AudioProcessor (BusesProperties()
-                        .withInput  ("Input",     juce::AudioChannelSet::stereo(), true)
-                        .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), false)
-                        .withOutput ("Output",    juce::AudioChannelSet::stereo(), true)),
+                        .withInput  ("Input", juce::AudioChannelSet::stereo(), true)
+                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", createParameterLayout())
 {
-    pDepth     = apvts.getRawParameterValue ("depth");
-    pThreshold = apvts.getRawParameterValue ("threshold");
-    pAttack    = apvts.getRawParameterValue ("attack");
-    pHold      = apvts.getRawParameterValue ("hold");
-    pRelease   = apvts.getRawParameterValue ("release");
-    pMix       = apvts.getRawParameterValue ("mix");
-    pUseSC     = apvts.getRawParameterValue ("usesc");
+    pRate      = apvts.getRawParameterValue ("rate");
+    pRateMode  = apvts.getRawParameterValue ("ratemode");
+    pSemitones = apvts.getRawParameterValue ("semitones");
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout SaichanProcessor::createParameterLayout()
+//==============================================================================
+// Parameters
+//==============================================================================
+juce::AudioProcessorValueTreeState::ParameterLayout
+SaichanProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "depth", 1 }, "Depth",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 80.0f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "rate", 1 },
+        "RATE",
+        juce::NormalisableRange<float> (0.0f, 4.0f, 0.01f),
+        2.0f));
 
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "threshold", 1 }, "Threshold",
-        juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), -30.0f));
+    params.push_back (std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID { "ratemode", 1 },
+        "RATE MODE",
+        true));
 
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "attack", 1 }, "Attack",
-        juce::NormalisableRange<float> (0.1f, 50.0f, 0.01f, 0.5f), 2.0f));
-
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "hold", 1 }, "Hold",
-        juce::NormalisableRange<float> (0.0f, 500.0f, 0.1f), 120.0f));
-
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "release", 1 }, "Release",
-        juce::NormalisableRange<float> (5.0f, 1000.0f, 0.1f, 0.5f), 200.0f));
-
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "mix", 1 }, "Mix",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { "usesc", 1 }, "External Sidechain", false));
+    params.push_back (std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "semitones", 1 },
+        "SEMITONES",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.01f),
+        0.0f));
 
     return { params.begin(), params.end() };
 }
 
+//==============================================================================
+// Bus layout
+//==============================================================================
 bool SaichanProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-    return true;
+    return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
+        && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 }
 
+//==============================================================================
+// Prepare
+//==============================================================================
 void SaichanProcessor::prepareToPlay (double sr, int)
 {
     sampleRate = sr;
-    envelope = 0.0f;
+    pumpPhase = 0.0;
     currentGain = 1.0f;
-    holdRemaining = 0;
+    pitchPhase = 0.0f;
+    pitchWritePosition = 0;
+
+    pitchDelayBuffer.setSize (2, juce::jmax (2048, (int) (sampleRate * 0.25)));
+    pitchDelayBuffer.clear();
+
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto position = playHead->getPosition())
+        {
+            if (auto hostBpm = position->getBpm())
+                bpm = *hostBpm;
+        }
+    }
 }
 
-void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+//==============================================================================
+// Audio processing
+//==============================================================================
+void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+                                     juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
     const int numSamples = buffer.getNumSamples();
+
     if (buffer.getNumChannels() < 2 || numSamples == 0)
         return;
 
-    // ¿Usar el bus de sidechain como disparador? (solo si el host lo ha activado)
-    auto* scBus = getBus (true, 1);
-    const bool scActive = pUseSC->load() > 0.5f
-                          && scBus != nullptr && scBus->isEnabled()
-                          && buffer.getNumChannels() >= 4;
+    // Read parameters
+    const float rate = pRate->load();
+    const bool syncMode = pRateMode->load() > 0.5f;
+    const float semitones = pSemitones->load();
 
-    const float depth     = pDepth->load() * 0.01f;
-    const float thrLin    = juce::Decibels::decibelsToGain (pThreshold->load());
-    const float mix       = pMix->load() * 0.01f;
-    const int   holdSamps = juce::roundToInt (pHold->load() * 0.001 * sampleRate);
+    // Get BPM from FL Studio
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto position = playHead->getPosition())
+        {
+            if (auto hostBpm = position->getBpm())
+                bpm = juce::jlimit (30.0, 300.0, *hostBpm);
+        }
+    }
 
-    const float attackCoef  = std::exp (-1.0f / (float) juce::jmax (1.0, sampleRate * pAttack->load()  * 0.001));
-    const float releaseCoef = std::exp (-1.0f / (float) juce::jmax (1.0, sampleRate * pRelease->load() * 0.001));
-    const float detectRelease = 0.995f; // ~ caída rápida del detector de pico
+    // RATE: musical divisions or free Hz
+    double cycleSeconds = 0.5;
 
-    float* outL = buffer.getWritePointer (0);
-    float* outR = buffer.getWritePointer (1);
+    if (syncMode)
+    {
+        static constexpr double beatMultipliers[] =
+        {
+            4.0, 2.0, 1.0, 0.5, 0.25
+        };
 
-    const float* trigL = scActive ? buffer.getReadPointer (2) : outL;
-    const float* trigR = scActive ? buffer.getReadPointer (3) : outR;
+        const int division = juce::jlimit (0, 4, juce::roundToInt (rate));
+        cycleSeconds = beatMultipliers[division] * 60.0 / bpm;
+    }
+    else
+    {
+        const double frequency = 0.25 + (rate / 4.0) * 7.75;
+        cycleSeconds = 1.0 / frequency;
+    }
+
+    const double phaseIncrement = 1.0 / (cycleSeconds * sampleRate);
+
+    // Fixed classic pumping curve
+    constexpr float minimumGain = 0.22f;
+
+    // Pitch shifting preparation
+    const float pitchRatio = std::pow (2.0f, semitones / 12.0f);
+    const bool pitchEnabled = std::abs (semitones) > 0.01f;
+
+    const int delaySize = pitchDelayBuffer.getNumSamples();
+    const float windowSamples = (float) (sampleRate * 0.08);
+    const float minimumDelay = (float) (sampleRate * 0.005);
+
+    const float pitchPhaseIncrement =
+        pitchEnabled
+        ? std::abs (pitchRatio - 1.0f) / windowSamples
+        : 0.0f;
+
+    float* left = buffer.getWritePointer (0);
+    float* right = buffer.getWritePointer (1);
+
+    float* delayL = pitchDelayBuffer.getWritePointer (0);
+    float* delayR = pitchDelayBuffer.getWritePointer (1);
+
+    auto readInterpolated = [] (const float* data, int size, float position)
+    {
+        while (position < 0.0f)
+            position += (float) size;
+
+        while (position >= (float) size)
+            position -= (float) size;
+
+        const int index1 = (int) position;
+        const int index2 = (index1 + 1) % size;
+        const float fraction = position - (float) index1;
+
+        return data[index1] + fraction * (data[index2] - data[index1]);
+    };
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // 1) Detector de pico del disparador
-        const float peak = juce::jmax (std::abs (trigL[i]), std::abs (trigR[i]));
-        envelope = juce::jmax (peak, envelope * detectRelease);
+        // 1. Automatic rhythmic pumping
+        const float phase = (float) pumpPhase;
 
-        // 2) Hold: mientras el kick esté por encima del umbral, se mantiene el ducking
-        if (envelope > thrLin)
-            holdRemaining = holdSamps;
-        else if (holdRemaining > 0)
-            --holdRemaining;
+        // Fast dip followed by a smooth recovery
+        const float curve = phase * phase;
+        const float targetGain = minimumGain + (1.0f - minimumGain) * curve;
 
-        // 3) Ganancia objetivo y suavizado (attack al bajar, release al subir)
-        const float target = (holdRemaining > 0) ? (1.0f - depth) : 1.0f;
-        const float coef   = (target < currentGain) ? attackCoef : releaseCoef;
-        currentGain = coef * currentGain + (1.0f - coef) * target;
+        currentGain = targetGain;
 
-        // 4) Mezcla dry/wet
-        const float wetL = outL[i] * currentGain;
-        const float wetR = outR[i] * currentGain;
-        outL[i] = outL[i] * (1.0f - mix) + wetL * mix;
-        outR[i] = outR[i] * (1.0f - mix) + wetR * mix;
+        pumpPhase += phaseIncrement;
+
+        if (pumpPhase >= 1.0)
+            pumpPhase -= 1.0;
+
+        // 2. Pitch processing
+        float inputL = left[i];
+        float inputR = right[i];
+
+        if (pitchEnabled)
+        {
+            delayL[pitchWritePosition] = inputL;
+            delayR[pitchWritePosition] = inputR;
+
+            const float phaseA = (float) pitchPhase;
+            const float phaseB = std::fmod (phaseA + 0.5f, 1.0f);
+
+            const float direction = (semitones > 0.0f) ? -1.0f : 1.0f;
+
+            const float delayA = minimumDelay
+                + (direction > 0.0f ? phaseA : 1.0f - phaseA) * windowSamples;
+
+            const float delayB = minimumDelay
+                + (direction > 0.0f ? phaseB : 1.0f - phaseB) * windowSamples;
+
+            const float readA = (float) pitchWritePosition - delayA;
+            const float readB = (float) pitchWritePosition - delayB;
+
+            const float fadeA = 0.5f - 0.5f * std::cos (phaseA * juce::MathConstants<float>::twoPi);
+            const float fadeB = 1.0f - fadeA;
+
+            const float shiftedL =
+                readInterpolated (delayL, delaySize, readA) * fadeA
+                + readInterpolated (delayL, delaySize, readB) * fadeB;
+
+            const float shiftedR =
+                readInterpolated (delayR, delaySize, readA) * fadeA
+                + readInterpolated (delayR, delaySize, readB) * fadeB;
+
+            inputL = shiftedL;
+            inputR = shiftedR;
+
+            pitchPhase += pitchPhaseIncrement;
+
+            if (pitchPhase >= 1.0f)
+                pitchPhase -= 1.0f;
+        }
+
+        // 3. Apply pumping
+        left[i] = inputL * currentGain;
+        right[i] = inputR * currentGain;
+
+        // 4. Advance delay buffer
+        pitchWritePosition = (pitchWritePosition + 1) % delaySize;
     }
 
     meter.store (1.0f - currentGain);
 }
 
+//==============================================================================
+// Editor
+//==============================================================================
 juce::AudioProcessorEditor* SaichanProcessor::createEditor()
 {
     return new SaichanEditor (*this);
 }
 
+//==============================================================================
+// Save and restore
+//==============================================================================
 void SaichanProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -139,11 +255,14 @@ void SaichanProcessor::getStateInformation (juce::MemoryBlock& destData)
 void SaichanProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xml (getXmlFromBinary (data, sizeInBytes));
+
     if (xml != nullptr && xml->hasTagName (apvts.state.getType()))
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
-// Punto de entrada que JUCE usa para crear el plugin
+//==============================================================================
+// Plugin entry point
+//==============================================================================
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new SaichanProcessor();
