@@ -81,7 +81,187 @@ namespace
                 const float d  = std::sqrt (dx * dx + dy * dy);
 
                 if (d >= r)
+                    continue;
 
+                const float t = d / r;
+                const float k = 1.0f - strength * (1.0f - t * t);
+
+                const int sx = juce::jlimit (0, photo.getWidth()  - 1, (int) (cx + dx * k));
+                const int sy = juce::jlimit (0, photo.getHeight() - 1, (int) (cy + dy * k));
+
+                const float edge = juce::jlimit (0.0f, 1.0f, r - d);
+
+                bulged.setPixelAt (x, y, photo.getPixelAt (sx, sy).withAlpha (edge));
+            }
+        }
+
+        g.drawImageAt (bulged, x0, y0);
+    }
+}
+
+//==============================================================================
+// Look & Feel
+//==============================================================================
+NeonLookAndFeel::NeonLookAndFeel()
+{
+    setColour (juce::Label::textColourId, juce::Colours::white);
+    setColour (juce::Slider::textBoxTextColourId, juce::Colours::white);
+    setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff050c16));
+    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    setColour (juce::ToggleButton::tickColourId, sky);
+    setColour (juce::ToggleButton::tickDisabledColourId, track);
+}
+
+void NeonLookAndFeel::drawRotarySlider (
+    juce::Graphics& g,
+    int x, int y, int width, int height,
+    float sliderPos,
+    float startAngle,
+    float endAngle,
+    juce::Slider&)
+{
+    auto bounds = juce::Rectangle<float> (
+        (float) x, (float) y, (float) width, (float) height).reduced (12.0f);
+
+    const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
+    const auto centre = bounds.getCentre();
+    const float angle = startAngle + sliderPos * (endAngle - startAngle);
+
+    juce::Path trackArc;
+    trackArc.addCentredArc (centre.x, centre.y, radius, radius,
+                            0.0f, startAngle, endAngle, true);
+
+    g.setColour (track);
+    g.strokePath (trackArc,
+        juce::PathStrokeType (6.0f, juce::PathStrokeType::curved,
+                              juce::PathStrokeType::rounded));
+
+    juce::Path activeArc;
+    activeArc.addCentredArc (centre.x, centre.y, radius, radius,
+                             0.0f, startAngle, angle, true);
+
+    for (int i = 4; i >= 1; --i)
+    {
+        g.setColour (sky.withAlpha (0.10f * (float) i));
+        g.strokePath (activeArc,
+            juce::PathStrokeType (5.0f + (float) i * 3.0f,
+                juce::PathStrokeType::curved,
+                juce::PathStrokeType::rounded));
+    }
+
+    g.setColour (skyCore);
+    g.strokePath (activeArc,
+        juce::PathStrokeType (4.0f, juce::PathStrokeType::curved,
+                              juce::PathStrokeType::rounded));
+
+    const float knobRadius = radius * 0.68f;
+
+    auto knobArea = juce::Rectangle<float> (
+        centre.x - knobRadius, centre.y - knobRadius,
+        knobRadius * 2.0f, knobRadius * 2.0f);
+
+    for (int i = 3; i >= 1; --i)
+    {
+        g.setColour (sky.withAlpha (0.08f * (float) i));
+        g.drawEllipse (knobArea.expanded ((float) i * 2.0f), 2.0f);
+    }
+
+    g.setColour (body);
+    g.fillEllipse (knobArea);
+
+    g.setColour (sky);
+    g.drawEllipse (knobArea, 2.0f);
+
+    const float innerRadius = radius * 0.28f;
+    const float outerRadius = radius * 0.57f;
+
+    const float px = centre.x + std::sin (angle) * innerRadius;
+    const float py = centre.y - std::cos (angle) * innerRadius;
+    const float qx = centre.x + std::sin (angle) * outerRadius;
+    const float qy = centre.y - std::cos (angle) * outerRadius;
+
+    g.setColour (skyCore);
+    g.drawLine (px, py, qx, qy, 3.5f);
+}
+
+//==============================================================================
+// Kickstart graph
+//==============================================================================
+KickstartGraph::KickstartGraph (SaichanProcessor& p,
+                                juce::Slider& depth,
+                                juce::Slider& rate)
+    : processor (p), depthKnob (depth), rateKnob (rate)
+{
+}
+
+void KickstartGraph::paint (juce::Graphics& g)
+{
+    const auto box = getLocalBounds().toFloat();
+
+    g.setColour (juce::Colour (0xc8020811));
+    g.fillRoundedRectangle (box, 12.0f);
+
+    g.setColour (NeonLookAndFeel::sky.withAlpha (0.5f));
+    g.drawRoundedRectangle (box.reduced (0.5f), 12.0f, 1.2f);
+
+    g.setFont (juce::Font (13.0f, juce::Font::bold));
+    g.setColour (NeonLookAndFeel::skyCore);
+    g.drawText ("KICKSTART", box.withHeight (26.0f).reduced (12.0f, 4.0f),
+                juce::Justification::left, false);
+
+    const auto plot = box.reduced (14.0f, 10.0f).withTrimmedTop (24.0f);
+
+    const float depth = (float) depthKnob.getValue();
+    const float minGain = 1.0f - depth * (1.0f - 0.22f);
+    const bool active = rateKnob.getValue() > 0.01;
+
+    auto gainAt = [minGain, active] (float x)
+    {
+        return active ? minGain + (1.0f - minGain) * x * x : 1.0f;
+    };
+
+    auto toY = [plot] (float gain)
+    {
+        return plot.getBottom() - (gain - 0.22f) / 0.78f * plot.getHeight();
+    };
+
+    juce::Path curve;
+
+    for (int i = 0; i <= 64; ++i)
+    {
+        const float x = (float) i / 64.0f;
+        const juce::Point<float> p (plot.getX() + x * plot.getWidth(),
+                                    toY (gainAt (x)));
+
+        if (i == 0)
+            curve.startNewSubPath (p);
+        else
+            curve.lineTo (p);
+    }
+
+    for (int i = 4; i >= 1; --i)
+    {
+        g.setColour (NeonLookAndFeel::sky.withAlpha (0.12f * (float) i));
+        g.strokePath (curve, juce::PathStrokeType ((float) i * 3.0f));
+    }
+
+    g.setColour (NeonLookAndFeel::skyCore);
+    g.strokePath (curve, juce::PathStrokeType (2.0f));
+
+    if (active)
+    {
+        const float phase = processor.getVisualPhase();
+        const float dotX = plot.getX() + phase * plot.getWidth();
+        const float dotY = toY (gainAt (phase));
+
+        g.setColour (NeonLookAndFeel::sky.withAlpha (0.35f));
+        g.fillEllipse (dotX - 10.0f, dotY - 10.0f, 20.0f, 20.0f);
+
+        g.setColour (NeonLookAndFeel::skyCore);
+        g.fillEllipse (dotX - 5.0f, dotY - 5.0f, 10.0f, 10.0f);
+    }
+}
 
 //==============================================================================
 // Editor
@@ -251,7 +431,6 @@ void SaichanEditor::timerCallback()
 
     repaint();
 }
-
 
 //==============================================================================
 // Paint
