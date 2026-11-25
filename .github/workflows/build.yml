@@ -1,1 +1,40 @@
 
+name: Build EL MAESTRO SAICHAN (VST3)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B build -A x64
+
+      - name: Build VST3
+        run: cmake --build build --config Release --parallel
+
+      - name: Prepare VST3
+        shell: pwsh
+        run: |
+          $plugin = Get-ChildItem -Path build -Recurse -Directory -Filter "*.vst3" | Select-Object -First 1
+          if (-not $plugin) {
+            throw "No se encontró el archivo VST3"
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Path $plugin.FullName -Destination dist -Recurse
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: EL-MAESTRO-SAICHAN-WINDOWS-VST3
+          path: dist/
