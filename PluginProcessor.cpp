@@ -28,8 +28,8 @@ SaichanProcessor::createParameterLayout()
     params.push_back (std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "rate", 1 },
         "RATE",
-        juce::NormalisableRange<float> (0.0f, 4.0f, 0.01f),
-        2.0f));
+        juce::NormalisableRange<float> (0.0f, 16.0f, 0.01f),
+        8.0f));
 
     params.push_back (std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID { "ratemode", 1 },
@@ -91,12 +91,11 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (buffer.getNumChannels() < 2 || numSamples == 0)
         return;
 
-    // Read parameters
     const float rate = pRate->load();
     const bool syncMode = pRateMode->load() > 0.5f;
     const float semitones = pSemitones->load();
 
-    // Get BPM from FL Studio
+    // Get BPM from host
     if (auto* playHead = getPlayHead())
     {
         if (auto position = playHead->getPosition())
@@ -106,31 +105,53 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // RATE: musical divisions or free Hz
+    // RATE = 0 means pumping OFF
+    const bool pumpEnabled = rate > 0.001f;
+
     double cycleSeconds = 0.5;
 
-    if (syncMode)
+    if (pumpEnabled)
     {
-        static constexpr double beatMultipliers[] =
+        if (syncMode)
         {
-            4.0, 2.0, 1.0, 0.5, 0.25
-        };
+            // 16 musical divisions:
+            // 1/1, 1/2, 1/4, 1/8, 1/16, 1/32,
+            // 1/4T, 1/8T, 1/16T, 1/32T,
+            // dotted 1/1, 1/2, 1/4, 1/8, 1/16, 1/32
 
-        const int division = juce::jlimit (0, 4, juce::roundToInt (rate));
-        cycleSeconds = beatMultipliers[division] * 60.0 / bpm;
+            static constexpr double beatMultipliers[16] =
+            {
+                4.0, 2.0, 1.0, 0.5,
+                0.25, 0.125,
+                0.6666667, 0.3333333,
+                0.1666667, 0.0833333,
+                6.0, 3.0, 1.5,
+                0.75, 0.375, 0.1875
+            };
+
+            const int division = juce::jlimit (
+                1, 16, juce::roundToInt (rate));
+
+            cycleSeconds =
+                beatMultipliers[division - 1] * 60.0 / bpm;
+        }
+        else
+        {
+            // HZ mode: RATE 1 to 16 = 1 to 16 cycles per second
+            const double frequency = juce::jlimit (
+                1.0, 16.0, (double) rate);
+
+            cycleSeconds = 1.0 / frequency;
+        }
     }
-    else
-    {
-        const double frequency = 0.25 + (rate / 4.0) * 7.75;
-        cycleSeconds = 1.0 / frequency;
-    }
 
-    const double phaseIncrement = 1.0 / (cycleSeconds * sampleRate);
+    const double phaseIncrement = pumpEnabled
+        ? 1.0 / (cycleSeconds * sampleRate)
+        : 0.0;
 
-    // Fixed classic pumping curve
     constexpr float minimumGain = 0.22f;
 
-    // Pitch shifting preparation
+    // Pitch processing remains independent from RATE
     const float pitchRatio = std::pow (2.0f, semitones / 12.0f);
     const bool pitchEnabled = std::abs (semitones) > 0.01f;
 
@@ -166,19 +187,25 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // 1. Automatic rhythmic pumping
-        const float phase = (float) pumpPhase;
+        // 1. Rhythmic pumping
+        if (pumpEnabled)
+        {
+            const float phase = (float) pumpPhase;
 
-        // Fast dip followed by a smooth recovery
-        const float curve = phase * phase;
-        const float targetGain = minimumGain + (1.0f - minimumGain) * curve;
+            // Fast dip and smooth recovery
+            const float curve = phase * phase;
+            currentGain = minimumGain + (1.0f - minimumGain) * curve;
 
-        currentGain = targetGain;
+            pumpPhase += phaseIncrement;
 
-        pumpPhase += phaseIncrement;
-
-        if (pumpPhase >= 1.0)
-            pumpPhase -= 1.0;
+            if (pumpPhase >= 1.0)
+                pumpPhase -= 1.0;
+        }
+        else
+        {
+            // Completely bypass pumping
+            currentGain = 1.0f;
+        }
 
         // 2. Pitch processing
         float inputL = left[i];
@@ -203,7 +230,9 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             const float readA = (float) pitchWritePosition - delayA;
             const float readB = (float) pitchWritePosition - delayB;
 
-            const float fadeA = 0.5f - 0.5f * std::cos (phaseA * juce::MathConstants<float>::twoPi);
+            const float fadeA = 0.5f - 0.5f * std::cos (
+                phaseA * juce::MathConstants<float>::twoPi);
+
             const float fadeB = 1.0f - fadeA;
 
             const float shiftedL =
@@ -221,6 +250,11 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
             if (pitchPhase >= 1.0f)
                 pitchPhase -= 1.0f;
+        }
+        else
+        {
+            delayL[pitchWritePosition] = inputL;
+            delayR[pitchWritePosition] = inputR;
         }
 
         // 3. Apply pumping
