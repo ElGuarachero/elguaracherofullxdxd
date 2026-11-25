@@ -1,17 +1,17 @@
-
 #pragma once
 
 #include "PluginProcessor.h"
 
 //==============================================================================
-// Estética neón azul
+// Estética azul celeste con neón
 //==============================================================================
 class NeonLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    static inline const juce::Colour neon     { 0xff168cff };
-    static inline const juce::Colour neonCore { 0xffbfe6ff };
-    static inline const juce::Colour track    { 0xff102746 };
+    static inline const juce::Colour sky     { 0xff7fd9ff };
+    static inline const juce::Colour skyCore { 0xffd9f5ff };
+    static inline const juce::Colour track   { 0xff0c2033 };
+    static inline const juce::Colour body    { 0xf0060c16 };
 
     NeonLookAndFeel();
 
@@ -38,17 +38,30 @@ public:
 
 private:
     void timerCallback() override;
+    void applyRateRange (bool sync);
 
     SaichanProcessor& processor;
     NeonLookAndFeel laf;
 
+    juce::Image background;        // foto original escalada
+    juce::Image backgroundCache;   // fondo ya recortado al tamaño de la ventana
+
     juce::Slider rateKnob;
     juce::Slider semitonesKnob;
+    juce::Slider highPassKnob;
+    juce::Slider lowPassKnob;
+    juce::Slider noiseKnob;
 
     juce::Label rateLabel;
     juce::Label semitonesLabel;
+    juce::Label highPassLabel;
+    juce::Label lowPassLabel;
+    juce::Label noiseLabel;
 
     juce::ToggleButton syncButton { "SYNC" };
+    juce::ToggleButton noiseSyncButton { "NOISE SYNC" };
+
+    bool appliedSync = false;
 
     using SliderAttachment =
         juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -58,8 +71,12 @@ private:
 
     std::unique_ptr<SliderAttachment> rateAttachment;
     std::unique_ptr<SliderAttachment> semitonesAttachment;
+    std::unique_ptr<SliderAttachment> highPassAttachment;
+    std::unique_ptr<SliderAttachment> lowPassAttachment;
+    std::unique_ptr<SliderAttachment> noiseAttachment;
 
     std::unique_ptr<ButtonAttachment> syncAttachment;
+    std::unique_ptr<ButtonAttachment> noiseSyncAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SaichanEditor)
 };
