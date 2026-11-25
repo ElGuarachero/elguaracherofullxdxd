@@ -41,16 +41,13 @@ target_compile_definitions(ElMaestroSaichan PUBLIC
 juce_add_binary_data (SaichanAssets SOURCES assets/fede_rodriguez.jpg)
 
 target_link_libraries (ElMaestroSaichan
-juce_add_binary_data (SaichanAssets SOURCES assets/fede_rodriguez.jpg assets/logo.png)
-    PRIVATE
-        SaichanAssets
-        juce::juce_dsp
-    PUBLIC
-        juce::juce_audio_basics
-        juce::juce_audio_processors
-        juce::juce_audio_utils
-        juce::juce_gui_basics
-        juce::juce_gui_extra
-        juce::juce_audio_plugin_client)
+    SaichanAssets
+    juce::juce_dsp
+    juce::juce_audio_basics
+    juce::juce_audio_processors
+    juce::juce_audio_utils
+    juce::juce_gui_basics
+    juce::juce_gui_extra
+    juce::juce_audio_plugin_client)
 
 target_compile_features (ElMaestroSaichan PRIVATE cxx_std_17)
