@@ -1,104 +1,185 @@
+
 #include "PluginEditor.h"
+#include <cmath>
 
 //==============================================================================
-// Look & feel neón
+// Look & Feel: azul neón
 //==============================================================================
 NeonLookAndFeel::NeonLookAndFeel()
 {
     setColour (juce::Label::textColourId, juce::Colours::white);
+    setColour (juce::Slider::textBoxTextColourId, juce::Colours::white);
+    setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff071426));
+    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     setColour (juce::ToggleButton::tickColourId, neon);
     setColour (juce::ToggleButton::tickDisabledColourId, track);
 }
 
-void NeonLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
-                                        float sliderPos, float startAngle, float endAngle,
-                                        juce::Slider&)
+void NeonLookAndFeel::drawRotarySlider (
+    juce::Graphics& g,
+    int x, int y, int width, int height,
+    float sliderPos,
+    float startAngle,
+    float endAngle,
+    juce::Slider&)
 {
-    auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (8.0f);
+    auto bounds = juce::Rectangle<float> (
+        (float) x, (float) y, (float) width, (float) height).reduced (12.0f);
+
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const auto centre  = bounds.getCentre();
-    const float angle  = startAngle + sliderPos * (endAngle - startAngle);
+    const auto centre = bounds.getCentre();
+    const float angle = startAngle + sliderPos * (endAngle - startAngle);
 
-    juce::PathStrokeType stroke (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    // Halo exterior
+    g.setColour (neon.withAlpha (0.08f));
+    g.fillEllipse (juce::Rectangle<float> (centre.x - radius + 2.0f,
+                                           centre.y - radius + 2.0f,
+                                           radius * 2.0f - 4.0f,
+                                           radius * 2.0f - 4.0f));
 
-    // Pista de fondo
-    juce::Path bgArc;
-    bgArc.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, endAngle, true);
+    // Pista
+    juce::Path backgroundArc;
+    backgroundArc.addCentredArc (centre.x, centre.y, radius, radius,
+                                 0.0f, startAngle, endAngle, true);
+
     g.setColour (track);
-    g.strokePath (bgArc, stroke);
+    g.strokePath (backgroundArc,
+                  juce::PathStrokeType (6.0f,
+                                        juce::PathStrokeType::curved,
+                                        juce::PathStrokeType::rounded));
 
-    // Arco de valor con halo neón
-    juce::Path valArc;
-    valArc.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, angle, true);
+    // Arco activo
+    juce::Path activeArc;
+    activeArc.addCentredArc (centre.x, centre.y, radius, radius,
+                             0.0f, startAngle, angle, true);
+
     for (int i = 4; i >= 1; --i)
     {
-        g.setColour (neon.withAlpha (0.12f * (float) i));
-        g.strokePath (valArc, juce::PathStrokeType (4.0f + (float) i * 4.0f,
-                                                    juce::PathStrokeType::curved,
-                                                    juce::PathStrokeType::rounded));
+        g.setColour (neon.withAlpha (0.10f * (float) i));
+        g.strokePath (activeArc,
+                      juce::PathStrokeType (6.0f + (float) i * 3.0f,
+                                            juce::PathStrokeType::curved,
+                                            juce::PathStrokeType::rounded));
     }
-    g.setColour (neonCore);
-    g.strokePath (valArc, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved,
-                                                juce::PathStrokeType::rounded));
 
-    // Puntero
-    const float px = centre.x + std::sin (angle) * radius * 0.25f;
-    const float py = centre.y - std::cos (angle) * radius * 0.25f;
-    const float qx = centre.x + std::sin (angle) * radius * 0.85f;
-    const float qy = centre.y - std::cos (angle) * radius * 0.85f;
+    g.setColour (neonCore);
+    g.strokePath (activeArc,
+                  juce::PathStrokeType (4.0f,
+                                        juce::PathStrokeType::curved,
+                                        juce::PathStrokeType::rounded));
+
+    // Centro de la perilla
+    const float knobRadius = radius * 0.68f;
+
+    g.setColour (juce::Colour (0xff101d30));
+    g.fillEllipse (centre.x - knobRadius, centre.y - knobRadius,
+                   knobRadius * 2.0f, knobRadius * 2.0f);
+
+    g.setColour (neon.withAlpha (0.8f));
+    g.drawEllipse (centre.x - knobRadius, centre.y - knobRadius,
+                   knobRadius * 2.0f, knobRadius * 2.0f, 1.5f);
+
+    // Indicador
+    const float innerRadius = radius * 0.28f;
+    const float outerRadius = radius * 0.57f;
+
+    const float px = centre.x + std::sin (angle) * innerRadius;
+    const float py = centre.y - std::cos (angle) * innerRadius;
+    const float qx = centre.x + std::sin (angle) * outerRadius;
+    const float qy = centre.y - std::cos (angle) * outerRadius;
+
     g.setColour (juce::Colours::white);
-    g.drawLine (px, py, qx, qy, 2.5f);
+    g.drawLine (px, py, qx, qy, 3.0f);
 }
 
 //==============================================================================
 // Editor
 //==============================================================================
-namespace
-{
-    constexpr std::array<const char*, 6> knobNames { "DEPTH", "THRESH", "ATTACK", "HOLD", "RELEASE", "MIX" };
-    constexpr std::array<const char*, 6> knobIds   { "depth", "threshold", "attack", "hold", "release", "mix" };
-
-    void drawNeonRect (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, float corner)
-    {
-        for (int i = 3; i >= 1; --i)
-        {
-            g.setColour (c.withAlpha (0.15f * (float) i));
-            g.drawRoundedRectangle (r, corner, 2.0f + (float) i * 2.0f);
-        }
-        g.setColour (juce::Colours::white);
-        g.drawRoundedRectangle (r, corner, 1.5f);
-    }
-}
-
 SaichanEditor::SaichanEditor (SaichanProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setLookAndFeel (&laf);
-    setSize (800, 380);
+    setSize (760, 440);
 
-    for (int i = 0; i < numKnobs; ++i)
+    // RATE
+    rateKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    rateKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 90, 22);
+    rateKnob.setRange (0.0, 4.0, 1.0);
+    rateKnob.setDoubleClickReturnValue (true, 2.0);
+    addAndMakeVisible (rateKnob);
+
+    rateKnob.textFromValueFunction = [this] (double value)
     {
-        auto& knob = knobs[(size_t) i];
-        knob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        knob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 72, 18);
-        knob.setColour (juce::Slider::textBoxTextColourId, juce::Colours::white);
-        knob.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        knob.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-        addAndMakeVisible (knob);
+        const bool sync = processor.apvts.getRawParameterValue ("ratemode")->load() > 0.5f;
 
-        auto& label = knobLabels[(size_t) i];
-        label.setText (knobNames[(size_t) i], juce::dontSendNotification);
-        label.setJustificationType (juce::Justification::centred);
-        label.setFont (juce::Font (13.0f, juce::Font::bold));
-        addAndMakeVisible (label);
+        if (sync)
+        {
+            static const char* divisions[] =
+            {
+                "1/1", "1/2", "1/4", "1/8", "1/16"
+            };
 
-        sliderAttachments.push_back (std::make_unique<SliderAttachment> (
-            processor.apvts, knobIds[(size_t) i], knob));
-    }
+            const int index = juce::jlimit (0, 4, juce::roundToInt (value));
+            return juce::String (divisions[index]);
+        }
 
-    addAndMakeVisible (scButton);
-    scAttachment = std::make_unique<ButtonAttachment> (processor.apvts, "usesc", scButton);
+        const float hz = 0.25f + ((float) value / 4.0f) * 7.75f;
+        return juce::String (hz, 2) + " Hz";
+    };
+
+    // SEMITONES
+    semitonesKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    semitonesKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 90, 22);
+    semitonesKnob.setRange (-12.0, 12.0, 0.01);
+    semitonesKnob.setDoubleClickReturnValue (true, 0.0);
+    semitonesKnob.textFromValueFunction = [] (double value)
+    {
+        return juce::String (value, 1) + " st";
+    };
+    addAndMakeVisible (semitonesKnob);
+
+    // Labels
+    rateLabel.setText ("RATE", juce::dontSendNotification);
+    rateLabel.setJustificationType (juce::Justification::centred);
+    rateLabel.setFont (juce::Font (19.0f, juce::Font::bold));
+    addAndMakeVisible (rateLabel);
+
+    semitonesLabel.setText ("SEMITONES", juce::dontSendNotification);
+    semitonesLabel.setJustificationType (juce::Justification::centred);
+    semitonesLabel.setFont (juce::Font (19.0f, juce::Font::bold));
+    addAndMakeVisible (semitonesLabel);
+
+    // SYNC / HZ selector
+    syncButton.setClickingTogglesState (true);
+    addAndMakeVisible (syncButton);
+
+    // Attachments
+    rateAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "rate", rateKnob);
+
+    semitonesAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "semitones", semitonesKnob);
+
+    syncAttachment = std::make_unique<ButtonAttachment> (
+        processor.apvts, "ratemode", syncButton);
+
+    syncButton.onClick = [this]
+    {
+        const bool sync = syncButton.getToggleState();
+
+        rateKnob.setRange (0.0, 4.0, sync ? 1.0 : 0.01);
+        rateKnob.setValue (rateKnob.getValue(), juce::sendNotificationSync);
+        syncButton.setButtonText (sync ? "SYNC" : "HZ");
+        rateKnob.updateText();
+    };
+
+    syncButton.setButtonText (
+        syncButton.getToggleState() ? "SYNC" : "HZ");
+
+    rateKnob.setRange (
+        0.0, 4.0,
+        syncButton.getToggleState() ? 1.0 : 0.01);
 
     startTimerHz (30);
 }
@@ -109,62 +190,88 @@ SaichanEditor::~SaichanEditor()
     setLookAndFeel (nullptr);
 }
 
+void SaichanEditor::timerCallback()
+{
+    repaint();
+}
+
+//==============================================================================
+// Background and graphics
+//==============================================================================
 void SaichanEditor::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // Fondo: degradado azul marino oscuro
-    juce::ColourGradient bg (juce::Colour (0xff020b1f), 0.0f, 0.0f,
-                             juce::Colour (0xff0b3a8a), 0.0f, bounds.getHeight(), false);
-    g.setGradientFill (bg);
+    juce::ColourGradient background (
+        juce::Colour (0xff020711), 0.0f, 0.0f,
+        juce::Colour (0xff0b2850), 0.0f, bounds.getHeight(), false);
+
+    g.setGradientFill (background);
     g.fillAll();
 
-    // Marco neón
-    drawNeonRect (g, bounds.reduced (6.0f), NeonLookAndFeel::neon, 14.0f);
+    // Decorative light
+    g.setColour (NeonLookAndFeel::neon.withAlpha (0.07f));
+    g.fillEllipse (getWidth() * 0.28f, 55.0f, 330.0f, 250.0f);
 
-    // Título con halo
-    auto titleArea = juce::Rectangle<float> (0.0f, 14.0f, bounds.getWidth(), 40.0f);
-    g.setFont (juce::Font (28.0f, juce::Font::bold));
-    for (float off : { -2.0f, 2.0f })
-    {
-        g.setColour (NeonLookAndFeel::neon.withAlpha (0.35f));
-        g.drawText ("EL MAESTRO SAICHAN", titleArea.translated (off, 0.0f), juce::Justification::centred, false);
-    }
+    // Outer frame
+    g.setColour (NeonLookAndFeel::neon.withAlpha (0.7f));
+    g.drawRoundedRectangle (bounds.reduced (7.0f), 16.0f, 2.0f);
+
+    // Header
+    g.setFont (juce::Font (27.0f, juce::Font::bold));
+    g.setColour (NeonLookAndFeel::neon.withAlpha (0.35f));
+    g.drawText ("EL MAESTRO SAICHAN",
+                getLocalBounds().removeFromTop (58).translated (0, 2),
+                juce::Justification::centred);
+
     g.setColour (juce::Colours::white);
-    g.drawText ("EL MAESTRO SAICHAN", titleArea, juce::Justification::centred, false);
+    g.drawText ("EL MAESTRO SAICHAN",
+                getLocalBounds().removeFromTop (58),
+                juce::Justification::centred);
 
-    // Medidor de reducción de ganancia (GR)
-    auto meterArea = juce::Rectangle<float> (230.0f, bounds.getHeight() - 42.0f,
-                                             bounds.getWidth() - 260.0f, 14.0f);
+    // Character placeholder area
+    auto characterArea = juce::Rectangle<float> (
+        getWidth() * 0.5f - 65.0f, 72.0f, 130.0f, 112.0f);
+
+    g.setColour (NeonLookAndFeel::neon.withAlpha (0.10f));
+    g.fillRoundedRectangle (characterArea, 18.0f);
+
+    g.setColour (NeonLookAndFeel::neon.withAlpha (0.65f));
+    g.drawRoundedRectangle (characterArea, 18.0f, 1.5f);
+
+    g.setColour (juce::Colours::white.withAlpha (0.8f));
+    g.setFont (juce::Font (12.0f, juce::Font::bold));
+    g.drawFittedText ("SAICHAN",
+                      characterArea.toNearestInt(),
+                      juce::Justification::centred,
+                      1);
+
+    // Pump meter
+    auto meterArea = juce::Rectangle<float> (
+        250.0f, (float) getHeight() - 30.0f, 260.0f, 8.0f);
+
     g.setColour (NeonLookAndFeel::track);
     g.fillRoundedRectangle (meterArea, 4.0f);
 
-    const float gr = juce::jlimit (0.0f, 1.0f, processor.getMeterLevel());
-    if (gr > 0.0f)
-    {
-        g.setColour (NeonLookAndFeel::neon);
-        g.fillRoundedRectangle (meterArea.withWidth (meterArea.getWidth() * gr), 4.0f);
-    }
+    const float level = juce::jlimit (0.0f, 1.0f, processor.getMeterLevel());
 
-    g.setColour (juce::Colours::white);
-    g.setFont (juce::Font (12.0f, juce::Font::bold));
-    g.drawText ("GAIN REDUCTION", meterArea.translated (0.0f, -16.0f).withHeight (14.0f),
-                juce::Justification::left, false);
+    g.setColour (NeonLookAndFeel::neon);
+    g.fillRoundedRectangle (
+        meterArea.withWidth (meterArea.getWidth() * level), 4.0f);
 }
 
+//==============================================================================
+// Layout
+//==============================================================================
 void SaichanEditor::resized()
 {
-    auto area = getLocalBounds().reduced (24);
-    area.removeFromTop (50); // espacio para el título
+    const int centreX = getWidth() / 2;
 
-    auto bottom = area.removeFromBottom (44);
-    scButton.setBounds (bottom.removeFromLeft (190).reduced (0, 6));
+    rateLabel.setBounds (100, 205, 220, 28);
+    semitonesLabel.setBounds (440, 205, 220, 28);
 
-    const int colWidth = area.getWidth() / numKnobs;
-    for (int i = 0; i < numKnobs; ++i)
-    {
-        auto col = area.removeFromLeft (colWidth);
-        knobLabels[(size_t) i].setBounds (col.removeFromTop (20));
-        knobs[(size_t) i].setBounds (col.reduced (4));
-    }
+    rateKnob.setBounds (100, 230, 220, 165);
+    semitonesKnob.setBounds (440, 230, 220, 165);
+
+    syncButton.setBounds (centreX - 45, 175, 90, 28);
 }
