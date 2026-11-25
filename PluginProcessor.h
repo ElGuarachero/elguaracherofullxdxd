@@ -98,9 +98,13 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     float getMeterLevel() const noexcept
-    float getVisualPhase() const noexcept { return visualPhase.load(); }
     {
         return meter.load();
+    }
+
+    float getVisualPhase() const noexcept
+    {
+        return visualPhase.load();
     }
 
     juce::AudioProcessorValueTreeState apvts;
@@ -121,9 +125,9 @@ private:
     std::atomic<float>* pNoise = nullptr;
     std::atomic<float>* pNoiseSync = nullptr;
     std::atomic<float>* pDepth = nullptr;
-    std::atomic<float> visualPhase { 0.0f };
 
     std::atomic<float> meter { 0.0f };
+    std::atomic<float> visualPhase { 0.0f };
 
     double sampleRate = 44100.0;
     double bpm = 120.0;
