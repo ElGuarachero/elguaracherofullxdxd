@@ -16,7 +16,15 @@ jobs:
     steps:
       - name: Download source
         uses: actions/checkout@v4
-
+      - name: Diagnostico
+        shell: bash
+        run: |
+          echo "--- PluginEditor.cpp ---"
+          grep -n "SaichanEditor::SaichanEditor" PluginEditor.cpp || echo "NO ENCONTRADO en PluginEditor.cpp"
+          echo "--- PluginEditor.h ---"
+          grep -n "explicit SaichanEditor" PluginEditor.h || echo "NO ENCONTRADO en PluginEditor.h"
+          echo "--- Archivos en la raiz ---"
+          ls -la
       - name: Configure CMake
         run: cmake -S . -B build -A x64
 
