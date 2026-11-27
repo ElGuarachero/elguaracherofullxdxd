@@ -111,6 +111,10 @@ NeonLookAndFeel::NeonLookAndFeel()
     setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     setColour (juce::ToggleButton::tickColourId, sky);
     setColour (juce::ToggleButton::tickDisabledColourId, track);
+    setColour (juce::ComboBox::textColourId, juce::Colours::white);
+    setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff0c2033));
+    setColour (juce::ComboBox::outlineColourId, sky.withAlpha (0.75f));
+    setColour (juce::ComboBox::arrowColourId, sky);
 }
 
 void NeonLookAndFeel::drawRotarySlider (
@@ -396,6 +400,13 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
     addAndMakeVisible (syncButton);
     addAndMakeVisible (noiseSyncButton);
 
+    lowPassAutoButton.setClickingTogglesState (true);
+    addAndMakeVisible (lowPassAutoButton);
+
+    lowPassBarsBox.addItemList (
+        juce::StringArray { "4 BARS", "8 BARS", "16 BARS", "32 BARS" }, 1);
+    addAndMakeVisible (lowPassBarsBox);
+
     addAndMakeVisible (kickstart);
 
     rateAttachment = std::make_unique<SliderAttachment> (
@@ -429,6 +440,11 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
 
     noiseSyncAttachment = std::make_unique<ButtonAttachment> (
         processor.apvts, "noisesync", noiseSyncButton);
+
+    lowPassAutoAttachment = std::make_unique<ButtonAttachment> (
+        processor.apvts, "lowpassauto", lowPassAutoButton);
+    lowPassBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        processor.apvts, "lowpassbars", lowPassBarsBox);
 
     appliedSync = syncButton.getToggleState();
     applyRateRange (appliedSync);
@@ -524,4 +540,6 @@ void SaichanEditor::resized()
         bottomSliders[i]->setBounds (x, row2KnobY, knobW, knobH);
     }
     noiseSyncButton.setBounds (cellX (2) + 12, row2ButtonY, 108, 24);
+    lowPassAutoButton.setBounds (cellX (1), row2ButtonY, 74, 24);
+    lowPassBarsBox.setBounds (cellX (1) + 76, row2ButtonY, 56, 24);
 }

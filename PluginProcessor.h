@@ -123,6 +123,8 @@ private:
     std::atomic<float>* pSemitones = nullptr;
     std::atomic<float>* pHighPass = nullptr;
     std::atomic<float>* pLowPass = nullptr;
+    std::atomic<float>* pLowPassAuto = nullptr;
+    std::atomic<float>* pLowPassBars = nullptr;
     std::atomic<float>* pNoise = nullptr;
     std::atomic<float>* pNoiseSync = nullptr;
     std::atomic<float>* pDepth = nullptr;
@@ -159,6 +161,15 @@ private:
 
     // Detector de entrada para que el NOISE solo aparezca cuando hay señal.
     float noiseInputEnvelope = 0.0f;
+
+    // Estado del barrido LOW PASS AUTO RISE, sincronizado al transporte del host.
+    bool autoRiseWasPlaying = false;
+    bool autoRiseWasEnabled = false;
+    double autoRiseStartPpq = 0.0;
+    double autoRiseLastPpq = 0.0;
+    double autoRiseFallbackBeats = 0.0;
+    float autoRiseLastStartFrequency = -1.0f;
+    int autoRiseLastBars = -1;
 
     juce::Random noiseRandom;
 

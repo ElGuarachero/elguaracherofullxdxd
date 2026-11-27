@@ -85,6 +85,8 @@ private:
 
     juce::ToggleButton syncButton { "SYNC" };
     juce::ToggleButton noiseSyncButton { "NOISE SYNC" };
+    juce::ToggleButton lowPassAutoButton { "AUTO RISE" };
+    juce::ComboBox lowPassBarsBox;
 
     KickstartGraph kickstart;
 
@@ -109,6 +111,8 @@ private:
 
     std::unique_ptr<ButtonAttachment> syncAttachment;
     std::unique_ptr<ButtonAttachment> noiseSyncAttachment;
+    std::unique_ptr<ButtonAttachment> lowPassAutoAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lowPassBarsAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SaichanEditor)
 };

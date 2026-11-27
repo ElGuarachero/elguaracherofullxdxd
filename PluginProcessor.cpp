@@ -34,6 +34,8 @@ SaichanProcessor::SaichanProcessor()
     pSemitones = apvts.getRawParameterValue ("semitones");
     pHighPass  = apvts.getRawParameterValue ("highpass");
     pLowPass   = apvts.getRawParameterValue ("lowpass");
+    pLowPassAuto = apvts.getRawParameterValue ("lowpassauto");
+    pLowPassBars = apvts.getRawParameterValue ("lowpassbars");
     pNoise     = apvts.getRawParameterValue ("noise");
     pNoiseSync = apvts.getRawParameterValue ("noisesync");
     pDepth     = apvts.getRawParameterValue ("depth");
@@ -79,6 +81,13 @@ SaichanProcessor::createParameterLayout()
         "LOW PASS",
         juce::NormalisableRange<float> (200.0f, 20000.0f, 0.01f, 0.3f),
         20000.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "lowpassauto", 1 }, "LOW PASS AUTO RISE", false));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "lowpassbars", 1 }, "LOW PASS RISE BARS",
+        juce::StringArray { "4 BARS", "8 BARS", "16 BARS", "32 BARS" }, 0));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "noise", 1 },
@@ -187,6 +196,13 @@ void SaichanProcessor::prepareToPlay (double sr, int)
     smoothedRateHz = 2.0f;
     smoothedSemitones = 0.0f;
     noiseInputEnvelope = 0.0f;
+    autoRiseWasPlaying = false;
+    autoRiseWasEnabled = false;
+    autoRiseStartPpq = 0.0;
+    autoRiseLastPpq = 0.0;
+    autoRiseFallbackBeats = 0.0;
+    autoRiseLastStartFrequency = -1.0f;
+    autoRiseLastBars = -1;
 
     pitchDelayBuffer.setSize (2, juce::jmax (2048, (int) (sampleRate * 0.25)));
     pitchDelayBuffer.clear();
@@ -241,17 +257,75 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Curva cuadrática: el volumen sube de forma suave con la perilla
     const float noiseGain = noiseLevel * noiseLevel * 0.25f;
 
-    // BPM desde el host
+    // BPM y posición musical desde el host.
+    bool hostIsPlaying = false;
+    bool hasHostPpq = false;
+    double blockStartPpq = 0.0;
     if (auto* playHead = getPlayHead())
     {
         if (auto position = playHead->getPosition())
         {
+            hostIsPlaying = position->getIsPlaying();
             if (auto hostBpm = position->getBpm())
                 bpm = juce::jlimit (30.0, 300.0, *hostBpm);
+            if (auto ppq = position->getPpqPosition())
+            {
+                blockStartPpq = *ppq;
+                hasHostPpq = true;
+            }
         }
     }
 
-    updateFilters (pHighPass->load(), pLowPass->load());
+    const bool autoRiseEnabled = pLowPassAuto->load() > 0.5f;
+    const float lowPassStartFrequency = juce::jlimit (200.0f, 20000.0f, pLowPass->load());
+    const int barsChoices[] = { 4, 8, 16, 32 };
+    const int barsIndex = juce::jlimit (0, 3, juce::roundToInt (pLowPassBars->load()));
+    const int riseBars = barsChoices[barsIndex];
+    const double riseDurationBeats = (double) riseBars * 4.0;
+
+    double elapsedRiseBeats = 0.0;
+    const double beatsPerSample = bpm / (60.0 * sampleRate);
+
+    if (autoRiseEnabled && hostIsPlaying)
+    {
+        const bool settingsChanged = ! autoRiseWasEnabled
+            || std::abs (lowPassStartFrequency - autoRiseLastStartFrequency) > 0.1f
+            || riseBars != autoRiseLastBars;
+
+        if (! autoRiseWasPlaying || settingsChanged)
+        {
+            autoRiseStartPpq = hasHostPpq ? blockStartPpq : 0.0;
+            autoRiseFallbackBeats = 0.0;
+            autoRiseWasPlaying = true;
+        }
+        else if (hasHostPpq && blockStartPpq + 0.0001 < autoRiseLastPpq)
+        {
+            // Si el host vuelve al inicio por un loop, reiniciar la secuencia.
+            autoRiseStartPpq = blockStartPpq;
+            autoRiseFallbackBeats = 0.0;
+        }
+
+        elapsedRiseBeats = hasHostPpq
+            ? juce::jmax (0.0, blockStartPpq - autoRiseStartPpq)
+            : autoRiseFallbackBeats;
+        autoRiseFallbackBeats += numSamples * beatsPerSample;
+        if (hasHostPpq)
+            autoRiseLastPpq = blockStartPpq;
+    }
+    else
+    {
+        autoRiseWasPlaying = false;
+        elapsedRiseBeats = 0.0;
+    }
+
+    autoRiseWasEnabled = autoRiseEnabled;
+    autoRiseLastStartFrequency = lowPassStartFrequency;
+    autoRiseLastBars = riseBars;
+
+    const double manualLowPass = pLowPass->load();
+    const double initialAutoCutoff = autoRiseEnabled && hostIsPlaying
+        ? lowPassStartFrequency : manualLowPass;
+    updateFilters (pHighPass->load(), initialAutoCutoff);
     updateNoiseFilters (pNoiseHighPass->load(), pNoiseLowPass->load());
 
     // Convertir RATE a frecuencia objetivo; el glide suaviza también cambios de SYNC.
@@ -312,6 +386,24 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     for (int i = 0; i < numSamples; ++i)
     {
+        if (autoRiseEnabled && hostIsPlaying && (i % 16 == 0))
+        {
+            const double musicalPosition = elapsedRiseBeats + (double) i * beatsPerSample;
+            const double cycleIndex = std::floor (musicalPosition / riseDurationBeats);
+            const double cycleProgress = std::fmod (musicalPosition, riseDurationBeats)
+                                       / riseDurationBeats;
+            const double cycleStartFrequency = lowPassStartFrequency + cycleIndex * 200.0;
+
+            double automatedCutoff = 20000.0;
+            if (cycleStartFrequency < 20000.0)
+            {
+                // Barrido logarítmico: la apertura se percibe progresiva en todo el rango.
+                automatedCutoff = cycleStartFrequency
+                    * std::pow (20000.0 / cycleStartFrequency, cycleProgress);
+            }
+            updateFilters (pHighPass->load(), automatedCutoff);
+        }
+
         smoothedRateHz += (targetForSmoothing - smoothedRateHz) * glideCoefficient;
         smoothedSemitones += (requestedSemitones - smoothedSemitones) * semitoneCoefficient;
 
