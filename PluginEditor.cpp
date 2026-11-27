@@ -5,18 +5,18 @@
 namespace
 {
     constexpr int windowSize = 800;
-    constexpr int knobW = 110;
-    constexpr int knobGap = 10;
-    constexpr int rowX0 = (windowSize - (6 * knobW + 5 * knobGap)) / 2;
-    constexpr int labelY = 596;
-    constexpr int knobY = 618;
-    constexpr int knobH = 124;
-    constexpr int buttonY = 748;
+    constexpr int knobW = 132;
+    constexpr int knobGap = 12;
+    constexpr int rowX0 = 32;
+    constexpr int knobH = 104;
+    constexpr int row1LabelY = 430;
+    constexpr int row1KnobY = 450;
+    constexpr int row1ButtonY = 552;
+    constexpr int row2LabelY = 600;
+    constexpr int row2KnobY = 620;
+    constexpr int row2ButtonY = 724;
 
-    int cellX (int index)
-    {
-        return rowX0 + index * (knobW + knobGap);
-    }
+    int cellX (int index) { return rowX0 + index * (knobW + knobGap); }
 
     struct FacePoint
     {
@@ -356,12 +356,40 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
     };
     addAndMakeVisible (noiseKnob);
 
+    styleKnob (glideKnob);
+    glideKnob.setRange (0.0, 2000.0, 1.0);
+    glideKnob.setDoubleClickReturnValue (true, 0.0);
+    glideKnob.textFromValueFunction = [] (double v)
+    { return v < 1.0 ? juce::String ("OFF") : juce::String (juce::roundToInt (v)) + " ms"; };
+    addAndMakeVisible (glideKnob);
+
+    styleKnob (outputKnob);
+    outputKnob.setRange (-24.0, 12.0, 0.01);
+    outputKnob.setDoubleClickReturnValue (true, 0.0);
+    outputKnob.textFromValueFunction = [] (double v) { return juce::String (v, 1) + " dB"; };
+    addAndMakeVisible (outputKnob);
+
+    auto setupFrequencyKnob = [&] (juce::Slider& slider, double min, double max, double def)
+    {
+        styleKnob (slider);
+        slider.setNormalisableRange (juce::NormalisableRange<double> (min, max, 0.01, 0.3));
+        slider.setDoubleClickReturnValue (true, def);
+        slider.textFromValueFunction = [] (double v) { return formatFrequency (v); };
+        addAndMakeVisible (slider);
+    };
+    setupFrequencyKnob (noiseHpKnob, 20.0, 20000.0, 20.0);
+    setupFrequencyKnob (noiseLpKnob, 200.0, 20000.0, 20000.0);
+
     setupLabel (rateLabel, "RATE");
     setupLabel (volumeLabel, "VOLUME");
     setupLabel (semitonesLabel, "SEMITONES");
     setupLabel (highPassLabel, "HIGH PASS");
     setupLabel (lowPassLabel, "LOW PASS");
     setupLabel (noiseLabel, "NOISE");
+    setupLabel (glideLabel, "GLIDE");
+    setupLabel (outputLabel, "OUTPUT");
+    setupLabel (noiseHpLabel, "NOISE HP");
+    setupLabel (noiseLpLabel, "NOISE LP");
 
     syncButton.setClickingTogglesState (true);
     noiseSyncButton.setClickingTogglesState (true);
@@ -387,6 +415,14 @@ SaichanEditor::SaichanEditor (SaichanProcessor& p)
 
     noiseAttachment = std::make_unique<SliderAttachment> (
         processor.apvts, "noise", noiseKnob);
+    glideAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "glide", glideKnob);
+    outputAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "output", outputKnob);
+    noiseHpAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "noisehp", noiseHpKnob);
+    noiseLpAttachment = std::make_unique<SliderAttachment> (
+        processor.apvts, "noiselp", noiseLpKnob);
 
     syncAttachment = std::make_unique<ButtonAttachment> (
         processor.apvts, "ratemode", syncButton);
@@ -454,8 +490,7 @@ void SaichanEditor::paint (juce::Graphics& g)
     g.setColour (NeonLookAndFeel::sky.withAlpha (0.7f));
     g.drawRoundedRectangle (bounds.reduced (7.0f), 17.0f, 2.0f);
 
-    auto plate = juce::Rectangle<float> ((float) rowX0 - 14.0f, 584.0f,
-                                         (float) (6 * knobW + 5 * knobGap + 28), 200.0f);
+    auto plate = juce::Rectangle<float> (20.0f, 414.0f, 760.0f, 374.0f);
 
     g.setColour (juce::Colour (0xc4020811));
     g.fillRoundedRectangle (plate, 16.0f);
@@ -468,23 +503,25 @@ void SaichanEditor::resized()
 {
     kickstart.setBounds (24, 24, 260, 118);
 
-    rateLabel.setBounds (cellX (0), labelY, knobW, 20);
-    rateKnob.setBounds (cellX (0), knobY, knobW, knobH);
-    syncButton.setBounds (cellX (0) + 8, buttonY, 94, 24);
+    // Fila superior: RATE, VOLUME, SEMITONES, GLIDE, OUTPUT
+    juce::Slider* topSliders[] = { &rateKnob, &volumeKnob, &semitonesKnob, &glideKnob, &outputKnob };
+    juce::Label* topLabels[] = { &rateLabel, &volumeLabel, &semitonesLabel, &glideLabel, &outputLabel };
+    for (int i = 0; i < 5; ++i)
+    {
+        const int x = cellX (i);
+        topLabels[i]->setBounds (x, row1LabelY, knobW, 20);
+        topSliders[i]->setBounds (x, row1KnobY, knobW, knobH);
+    }
+    syncButton.setBounds (cellX (0) + 18, row1ButtonY, 96, 24);
 
-    volumeLabel.setBounds (cellX (1), labelY, knobW, 20);
-    volumeKnob.setBounds (cellX (1), knobY, knobW, knobH);
-
-    semitonesLabel.setBounds (cellX (2), labelY, knobW, 20);
-    semitonesKnob.setBounds (cellX (2), knobY, knobW, knobH);
-
-    highPassLabel.setBounds (cellX (3), labelY, knobW, 20);
-    highPassKnob.setBounds (cellX (3), knobY, knobW, knobH);
-
-    lowPassLabel.setBounds (cellX (4), labelY, knobW, 20);
-    lowPassKnob.setBounds (cellX (4), knobY, knobW, knobH);
-
-    noiseLabel.setBounds (cellX (5), labelY, knobW, 20);
-    noiseKnob.setBounds (cellX (5), knobY, knobW, knobH);
-    noiseSyncButton.setBounds (cellX (5) + 2, buttonY, 106, 24);
+    // Fila inferior: HIGH PASS, LOW PASS, NOISE, NOISE HP, NOISE LP
+    juce::Slider* bottomSliders[] = { &highPassKnob, &lowPassKnob, &noiseKnob, &noiseHpKnob, &noiseLpKnob };
+    juce::Label* bottomLabels[] = { &highPassLabel, &lowPassLabel, &noiseLabel, &noiseHpLabel, &noiseLpLabel };
+    for (int i = 0; i < 5; ++i)
+    {
+        const int x = cellX (i);
+        bottomLabels[i]->setBounds (x, row2LabelY, knobW, 20);
+        bottomSliders[i]->setBounds (x, row2KnobY, knobW, knobH);
+    }
+    noiseSyncButton.setBounds (cellX (2) + 12, row2ButtonY, 108, 24);
 }

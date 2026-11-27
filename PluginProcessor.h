@@ -112,6 +112,7 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void updateFilters (double hpFreq, double lpFreq);
+    void updateNoiseFilters (double hpFreq, double lpFreq);
 
     // 8.º orden = 4 biquads por filtro (valores Q de Butterworth)
     static constexpr int filterStages = 4;
@@ -125,6 +126,10 @@ private:
     std::atomic<float>* pNoise = nullptr;
     std::atomic<float>* pNoiseSync = nullptr;
     std::atomic<float>* pDepth = nullptr;
+    std::atomic<float>* pGlide = nullptr;
+    std::atomic<float>* pNoiseHighPass = nullptr;
+    std::atomic<float>* pNoiseLowPass = nullptr;
+    std::atomic<float>* pOutput = nullptr;
 
     std::atomic<float> meter { 0.0f };
     std::atomic<float> visualPhase { 0.0f };
@@ -141,8 +146,16 @@ private:
 
     SaichanBiquad hpFilters[2][filterStages];   // [canal][etapa]
     SaichanBiquad lpFilters[2][filterStages];
+    SaichanBiquad noiseHpFilters[2];
+    SaichanBiquad noiseLpFilters[2];
     double lastHpFreq = -1.0;
     double lastLpFreq = -1.0;
+    double lastNoiseHpFreq = -1.0;
+    double lastNoiseLpFreq = -1.0;
+
+    // Parámetros suavizados para evitar saltos audibles
+    float smoothedRateHz = 2.0f;
+    float smoothedSemitones = 0.0f;
 
     juce::Random noiseRandom;
 

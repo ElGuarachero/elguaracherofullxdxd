@@ -37,6 +37,10 @@ SaichanProcessor::SaichanProcessor()
     pNoise     = apvts.getRawParameterValue ("noise");
     pNoiseSync = apvts.getRawParameterValue ("noisesync");
     pDepth     = apvts.getRawParameterValue ("depth");
+    pGlide     = apvts.getRawParameterValue ("glide");
+    pNoiseHighPass = apvts.getRawParameterValue ("noisehp");
+    pNoiseLowPass  = apvts.getRawParameterValue ("noiselp");
+    pOutput    = apvts.getRawParameterValue ("output");
 }
 
 //==============================================================================
@@ -93,6 +97,22 @@ SaichanProcessor::createParameterLayout()
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f),
         1.0f));
 
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "glide", 1 }, "GLIDE",
+        juce::NormalisableRange<float> (0.0f, 2000.0f, 1.0f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "noisehp", 1 }, "NOISE HP",
+        juce::NormalisableRange<float> (20.0f, 20000.0f, 0.01f, 0.3f), 20.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "noiselp", 1 }, "NOISE LP",
+        juce::NormalisableRange<float> (200.0f, 20000.0f, 0.01f, 0.3f), 20000.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output", 1 }, "OUTPUT",
+        juce::NormalisableRange<float> (-24.0f, 12.0f, 0.01f), 0.0f));
+
     return { params.begin(), params.end() };
 }
 
@@ -133,6 +153,27 @@ void SaichanProcessor::updateFilters (double hpFreq, double lpFreq)
     }
 }
 
+void SaichanProcessor::updateNoiseFilters (double hpFreq, double lpFreq)
+{
+    const double limit = sampleRate * 0.45;
+    hpFreq = juce::jlimit (20.0, limit, hpFreq);
+    lpFreq = juce::jlimit (20.0, limit, lpFreq);
+
+    if (hpFreq != lastNoiseHpFreq)
+    {
+        lastNoiseHpFreq = hpFreq;
+        for (int ch = 0; ch < 2; ++ch)
+            noiseHpFilters[ch].setHighPass (sampleRate, hpFreq, 0.70710678);
+    }
+
+    if (lpFreq != lastNoiseLpFreq)
+    {
+        lastNoiseLpFreq = lpFreq;
+        for (int ch = 0; ch < 2; ++ch)
+            noiseLpFilters[ch].setLowPass (sampleRate, lpFreq, 0.70710678);
+    }
+}
+
 //==============================================================================
 // Prepare
 //==============================================================================
@@ -143,6 +184,8 @@ void SaichanProcessor::prepareToPlay (double sr, int)
     currentGain = 1.0f;
     pitchPhase = 0.0f;
     pitchWritePosition = 0;
+    smoothedRateHz = 2.0f;
+    smoothedSemitones = 0.0f;
 
     pitchDelayBuffer.setSize (2, juce::jmax (2048, (int) (sampleRate * 0.25)));
     pitchDelayBuffer.clear();
@@ -156,6 +199,8 @@ void SaichanProcessor::prepareToPlay (double sr, int)
 
     lastHpFreq = -1.0;
     lastLpFreq = -1.0;
+    lastNoiseHpFreq = -1.0;
+    lastNoiseLpFreq = -1.0;
 
     if (auto* playHead = getPlayHead())
     {
@@ -180,9 +225,11 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (buffer.getNumChannels() < 2 || numSamples == 0)
         return;
 
-    const float rate = pRate->load();
+    const float requestedRate = pRate->load();
     const bool syncMode = pRateMode->load() > 0.5f;
-    const float semitones = pSemitones->load();
+    const float requestedSemitones = pSemitones->load();
+    const float glideMs = pGlide->load();
+    const float outputDb = pOutput->load();
     const float noiseLevel = pNoise->load();
     const bool noiseFollowsRate = pNoiseSync->load() > 0.5f;
 
@@ -204,44 +251,42 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     updateFilters (pHighPass->load(), pLowPass->load());
+    updateNoiseFilters (pNoiseHighPass->load(), pNoiseLowPass->load());
 
-    // RATE = 0 significa pumping apagado
-    const bool pumpEnabled = rate > 0.001f;
-
-    double cycleSeconds = 0.5;
-
-    if (pumpEnabled)
+    // Convertir RATE a frecuencia objetivo; el glide suaviza también cambios de SYNC.
+    const bool requestedPumpEnabled = requestedRate > 0.001f;
+    double targetCycleSeconds = 0.5;
+    if (requestedPumpEnabled)
     {
         if (syncMode)
         {
-            const int division = juce::jlimit (
-                1, numSyncDivisions, juce::roundToInt (rate));
-
-            cycleSeconds = syncBeats[division - 1] * 60.0 / bpm;
+            const int division = juce::jlimit (1, numSyncDivisions,
+                                                juce::roundToInt (requestedRate));
+            targetCycleSeconds = syncBeats[division - 1] * 60.0 / bpm;
         }
         else
         {
-            const double frequency = juce::jlimit (0.01, 32.0, (double) rate);
-            cycleSeconds = 1.0 / frequency;
+            const double frequency = juce::jlimit (0.01, 32.0, (double) requestedRate);
+            targetCycleSeconds = 1.0 / frequency;
         }
     }
+    const float targetRateHz = requestedPumpEnabled
+        ? (float) (1.0 / targetCycleSeconds) : 0.0f;
 
-    const double phaseIncrement = pumpEnabled
-        ? 1.0 / (cycleSeconds * sampleRate)
-        : 0.0;
+    const float glideSeconds = glideMs * 0.001f;
+    const float glideCoefficient = glideSeconds <= 0.0001f ? 1.0f
+        : 1.0f - std::exp (-1.0f / (float) (glideSeconds * sampleRate));
 
-    // El pitch es independiente del RATE
-    const float pitchRatio = std::pow (2.0f, semitones / 12.0f);
-    const bool pitchEnabled = std::abs (semitones) > 0.01f;
+    const float targetForSmoothing = targetRateHz;
+    const float semitoneCoefficient = glideCoefficient;
+
+    // El pitch y el rate siguen el tiempo de glide elegido.
+    const float outputGain = juce::Decibels::decibelsToGain (outputDb);
 
     const int delaySize = pitchDelayBuffer.getNumSamples();
     const float windowSamples = (float) (sampleRate * 0.08);
     const float minimumDelay = (float) (sampleRate * 0.005);
 
-    const float pitchPhaseIncrement =
-        pitchEnabled
-        ? std::abs (pitchRatio - 1.0f) / windowSamples
-        : 0.0f;
 
     float* left = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
@@ -266,6 +311,16 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     for (int i = 0; i < numSamples; ++i)
     {
+        smoothedRateHz += (targetForSmoothing - smoothedRateHz) * glideCoefficient;
+        smoothedSemitones += (requestedSemitones - smoothedSemitones) * semitoneCoefficient;
+
+        const bool pumpEnabled = smoothedRateHz > 0.001f;
+        const double phaseIncrement = pumpEnabled ? (double) smoothedRateHz / sampleRate : 0.0;
+        const float pitchRatio = std::pow (2.0f, smoothedSemitones / 12.0f);
+        const bool pitchEnabled = std::abs (smoothedSemitones) > 0.01f;
+        const float pitchPhaseIncrement = pitchEnabled
+            ? std::abs (pitchRatio - 1.0f) / windowSamples : 0.0f;
+
         // 1. Pumping rítmico
         float pumpShape = 0.0f;
 
@@ -299,7 +354,7 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             const float phaseA = (float) pitchPhase;
             const float phaseB = std::fmod (phaseA + 0.5f, 1.0f);
 
-            const float direction = (semitones > 0.0f) ? -1.0f : 1.0f;
+            const float direction = (smoothedSemitones > 0.0f) ? -1.0f : 1.0f;
 
             const float delayA = minimumDelay
                 + (direction > 0.0f ? phaseA : 1.0f - phaseA) * windowSamples;
@@ -360,9 +415,16 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             : 1.0f;
 
         const float amp = noiseGain * noiseEnvelope;
+        float noiseL = (noiseRandom.nextFloat() * 2.0f - 1.0f) * amp;
+        float noiseR = (noiseRandom.nextFloat() * 2.0f - 1.0f) * amp;
 
-        outL += (noiseRandom.nextFloat() * 2.0f - 1.0f) * amp;
-        outR += (noiseRandom.nextFloat() * 2.0f - 1.0f) * amp;
+        noiseL = noiseHpFilters[0].process (noiseL);
+        noiseR = noiseHpFilters[1].process (noiseR);
+        noiseL = noiseLpFilters[0].process (noiseL);
+        noiseR = noiseLpFilters[1].process (noiseR);
+
+        outL = (outL + noiseL) * outputGain;
+        outR = (outR + noiseR) * outputGain;
 
         left[i] = outL;
         right[i] = outR;

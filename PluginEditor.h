@@ -67,6 +67,10 @@ private:
     juce::Slider highPassKnob;
     juce::Slider lowPassKnob;
     juce::Slider noiseKnob;
+    juce::Slider glideKnob;
+    juce::Slider outputKnob;
+    juce::Slider noiseHpKnob;
+    juce::Slider noiseLpKnob;
 
     juce::Label rateLabel;
     juce::Label volumeLabel;
@@ -74,6 +78,10 @@ private:
     juce::Label highPassLabel;
     juce::Label lowPassLabel;
     juce::Label noiseLabel;
+    juce::Label glideLabel;
+    juce::Label outputLabel;
+    juce::Label noiseHpLabel;
+    juce::Label noiseLpLabel;
 
     juce::ToggleButton syncButton { "SYNC" };
     juce::ToggleButton noiseSyncButton { "NOISE SYNC" };
@@ -94,6 +102,10 @@ private:
     std::unique_ptr<SliderAttachment> highPassAttachment;
     std::unique_ptr<SliderAttachment> lowPassAttachment;
     std::unique_ptr<SliderAttachment> noiseAttachment;
+    std::unique_ptr<SliderAttachment> glideAttachment;
+    std::unique_ptr<SliderAttachment> outputAttachment;
+    std::unique_ptr<SliderAttachment> noiseHpAttachment;
+    std::unique_ptr<SliderAttachment> noiseLpAttachment;
 
     std::unique_ptr<ButtonAttachment> syncAttachment;
     std::unique_ptr<ButtonAttachment> noiseSyncAttachment;
