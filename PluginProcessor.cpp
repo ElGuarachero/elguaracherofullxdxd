@@ -186,6 +186,7 @@ void SaichanProcessor::prepareToPlay (double sr, int)
     pitchWritePosition = 0;
     smoothedRateHz = 2.0f;
     smoothedSemitones = 0.0f;
+    noiseInputEnvelope = 0.0f;
 
     pitchDelayBuffer.setSize (2, juce::jmax (2048, (int) (sampleRate * 0.25)));
     pitchDelayBuffer.clear();
@@ -409,12 +410,29 @@ void SaichanProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             outR = lpFilters[1][s].process (outR);
         }
 
-        // 5. Noise
+        // 5. Noise: se habilita solo mientras haya señal en la entrada.
+        // Detector con ataque rápido y release suave para evitar cortes bruscos.
+        const float inputLevel = juce::jmax (std::abs (inputL), std::abs (inputR));
+        constexpr float noiseGateAttackMs = 5.0f;
+        constexpr float noiseGateReleaseMs = 70.0f;
+        constexpr float noiseGateThreshold = 0.0005f; // aprox. -66 dBFS
+        constexpr float noiseGateFullLevel = 0.0063f;  // aprox. -44 dBFS
+
+        const float gateTimeMs = inputLevel > noiseInputEnvelope
+            ? noiseGateAttackMs : noiseGateReleaseMs;
+        const float gateCoefficient = std::exp (
+            -1.0f / (float) (0.001 * gateTimeMs * sampleRate));
+        noiseInputEnvelope = inputLevel + gateCoefficient * (noiseInputEnvelope - inputLevel);
+
+        const float inputGate = juce::jlimit (0.0f, 1.0f,
+            (noiseInputEnvelope - noiseGateThreshold)
+            / (noiseGateFullLevel - noiseGateThreshold));
+
         const float noiseEnvelope = noiseFollowsRate
             ? (pumpEnabled ? pumpShape : 0.0f)
             : 1.0f;
 
-        const float amp = noiseGain * noiseEnvelope;
+        const float amp = noiseGain * noiseEnvelope * inputGate;
         float noiseL = (noiseRandom.nextFloat() * 2.0f - 1.0f) * amp;
         float noiseR = (noiseRandom.nextFloat() * 2.0f - 1.0f) * amp;
 

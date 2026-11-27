@@ -157,6 +157,9 @@ private:
     float smoothedRateHz = 2.0f;
     float smoothedSemitones = 0.0f;
 
+    // Detector de entrada para que el NOISE solo aparezca cuando hay señal.
+    float noiseInputEnvelope = 0.0f;
+
     juce::Random noiseRandom;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SaichanProcessor)
